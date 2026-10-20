@@ -62,7 +62,8 @@ The relay finds the session transcript under `~/.claude/projects/<host path with
 `CLAUDE_UI_HOST_DIR` (set by `tmux.sh`), and reads the tables through `search_path`, so nothing in
 it names a schema. `api` itself is not parameterised: it is the stack's PostgREST convention.
 
-Updating a host later: `git submodule update --remote claude-ui && claude-ui/sql/apply.sh`.
+Updating a host later: `git submodule update --remote claude-ui && claude-ui/sql/apply.sh`, and only THEN
+restart `voice-relay`: a newer relay may read columns the older schema lacks and crash-loop until applied.
 
 ## Host contract
 
