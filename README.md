@@ -14,6 +14,7 @@ PostgREST, a SvelteKit app and a tmux worker registry; the host mounts the page 
 
 ```
 web/ClaudePage.svelte      the page, as a Svelte component with a 3-prop host contract
+web/ClaudeDock.svelte      optional: the same chat on every page (launcher -> popup -> pinned side panel)
 relay/claude_voice_relay.py  the worker: transcript -> DB (OUT), DB -> tmux send-keys (IN), status
 relay/db.py                the relay's own DB access (no host imports)
 bin/notify_claude.sh       type "NOTIFY: <msg>" into the claude pane (deduped, fail-open)
@@ -82,6 +83,19 @@ restart `voice-relay`: a newer relay may read columns the older schema lacks and
 - `getToken()` — returns the viewer's JWT (the page sends `Authorization: Bearer`).
 - `isAdmin()` — client-side predicate only; the server-side gate is the `api.claude_*` objects, which
   evaluate the `@ADMIN@` expression you rendered (`CLAUDE_UI_ADMIN_FN`, default `<schema>.is_admin()`).
+
+**Optional: the chat on every page.** `ClaudeDock.svelte` takes the same three props and wraps
+ClaudePage as a launcher button (bottom right) that opens a popup chat, which can be pinned as a
+full-height, resizable side panel on wide screens (the page makes room: a margin on `<html>`). Put it
+once in the root layout, so it stays mounted across navigation; state and width persist per browser.
+
+```svelte
+<ClaudeDock pgrst={PGRST} {getToken} {isAdmin}
+            hidden={!isAdmin() || $page.url.pathname.startsWith("/admin/claude")} />
+```
+
+- `hidden` — hide it (non-admins; the route that already shows ClaudePage full page).
+- `storageKey` — localStorage key for its state (default `claude_ui_dock`).
 
 In `svelte.config.js`: `kit.alias = { '$claude-ui': '../claude-ui/web' }`, and in `vite.config.js`
 add `../claude-ui` to `server.fs.allow` if `fs.strict` is on.
