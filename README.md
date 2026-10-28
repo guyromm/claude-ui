@@ -91,10 +91,11 @@ once in the root layout, so it stays mounted across navigation; state and width 
 
 ```svelte
 <ClaudeDock pgrst={PGRST} {getToken} {isAdmin}
-            hidden={!isAdmin() || $page.url.pathname.startsWith("/admin/claude")} />
+            hidden={$page.url.pathname.startsWith("/admin/claude")} />
 ```
 
-- `hidden` — hide it (non-admins; the route that already shows ClaudePage full page).
+- `hidden` — hide it, e.g. on the route that already shows ClaudePage full page. Non-admins never see it
+  (it re-checks `isAdmin()` every second, so sign-in/out applies without a prop change).
 - `storageKey` — localStorage key for its state (default `claude_ui_dock`).
 
 In `svelte.config.js`: `kit.alias = { '$claude-ui': '../claude-ui/web' }`, and in `vite.config.js`

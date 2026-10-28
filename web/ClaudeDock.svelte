@@ -7,13 +7,13 @@
   //   side   -> pinned as a full-height panel on the right (wide screens), resizable from its left
   //             edge; the page makes room for it (body margin), so nothing is hidden behind it
   // State and width are per browser (localStorage). Closing unmounts ClaudePage, which stops its polling.
-  import { onDestroy } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import ClaudePage from "./ClaudePage.svelte";
   // HOST CONTRACT: ClaudePage's three props, plus
   export let pgrst;
   export let getToken;
   export let isAdmin;
-  export let hidden = false;          // host hides the dock, e.g. on its full-page claude route or for non-admins
+  export let hidden = false;          // host hides the dock, e.g. on its full-page claude route
   export let storageKey = "claude_ui_dock";
 
   const SIDE_MIN = 1000;              // narrower than this, "side" falls back to the popup
@@ -24,8 +24,19 @@
 
   let vw = typeof window === "undefined" ? 0 : window.innerWidth;
   const onResize = () => (vw = window.innerWidth);
-  addEventListener("resize", onResize);
-  $: shown = hidden ? "closed" : mode === "side" && vw < SIDE_MIN ? "popup" : mode;
+  // never shown to non-admins, whatever the host passes (the API refuses them anyway). Re-checked every
+  // second: isAdmin() reads the host's session, which can change (sign in / out) without any prop changing.
+  let admin = false;
+  const checkAdmin = () => { try { admin = !!isAdmin(); } catch { admin = false; } };
+  let adminTimer;
+  // browser-only setup in onMount, so hosts that server-render can mount the dock without a browser gate
+  onMount(() => {
+    checkAdmin();
+    adminTimer = setInterval(checkAdmin, 1000);
+    addEventListener("resize", onResize);
+  });
+  $: off = hidden || !admin;
+  $: shown = off ? "closed" : mode === "side" && vw < SIDE_MIN ? "popup" : mode;
 
   // SIDE makes room on the page itself: a margin on <html> works for any host layout, sticky headers included
   $: if (typeof document !== "undefined") {
@@ -34,7 +45,9 @@
     root.classList.toggle("claude-docked", shown === "side");
   }
   onDestroy(() => {
+    if (typeof window === "undefined") return;
     removeEventListener("resize", onResize);
+    clearInterval(adminTimer);
     document.documentElement.classList.remove("claude-docked");
   });
 
@@ -49,7 +62,7 @@
 </script>
 
 {#if shown === "closed"}
-  {#if !hidden}
+  {#if !off}
     <button class="cui-launch" on:click={() => (mode = "popup")} title="Chat with Claude" aria-label="Chat with Claude">💬</button>
   {/if}
 {:else}
