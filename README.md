@@ -76,13 +76,16 @@ restart `voice-relay`: a newer relay may read columns the older schema lacks and
   import { isAdmin, getToken } from "$lib/auth";
   import { PGRST } from "$lib/api";
 </script>
-<ClaudePage pgrst={PGRST} {getToken} {isAdmin} />
+<ClaudePage pgrst={PGRST} {getToken} {isAdmin} loginUrl="/login?next=" />
 ```
 
 - `pgrst` — PostgREST base URL serving the `api` schema.
 - `getToken()` — returns the viewer's JWT (the page sends `Authorization: Bearer`).
 - `isAdmin()` — client-side predicate only; the server-side gate is the `api.claude_*` objects, which
   evaluate the `@ADMIN@` expression you rendered (`CLAUDE_UI_ADMIN_FN`, default `<schema>.is_admin()`).
+- `loginUrl` (optional) — the host's sign-in page with the return parameter last, e.g. `"/login?next="`:
+  the page's own path is appended URL-encoded. A signed-out viewer is redirected there; a signed-in
+  non-admin gets "Admins only" with a sign-in link. Without it the page only says "Admins only".
 
 **Optional: the chat on every page.** `ClaudeDock.svelte` takes the same three props and wraps
 ClaudePage as a launcher button (bottom right) that opens a popup chat, which can be pinned as a

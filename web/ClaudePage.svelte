@@ -14,6 +14,8 @@
   export let pgrst;          // e.g. "https://api.example.com"
   export let getToken;       // () => JWT string (or null)
   export let isAdmin;        // () => boolean
+  export let loginUrl = null; // optional: the host's sign-in page, the return path is appended URL-encoded
+                              // (e.g. "/login?next="). Signed out -> redirected there; else just a link.
 
   let ready = false, admin = false, err = "";
   // TRUE until the first message fetch settles. Without it the page rendered "No messages yet"
@@ -463,12 +465,16 @@
     else { try { rec.stop(); } catch {} }
   }
 
+  const loginHref = () => loginUrl + encodeURIComponent(location.pathname + location.search + location.hash);
+
   onMount(() => {
     document.addEventListener("selectionchange", onSelect);
     // ready=true FIRST and in a finally: a throw in isAdmin()/getToken() (some mobile privacy modes
     // make localStorage access throw) must never leave the page stuck on the "…" loading state.
     try {
       admin = isAdmin();
+      // signed out: go sign in and come back here (signed in but not admin: the page offers the link)
+      if (!admin && loginUrl && !getToken()) { location.replace(loginHref()); return; }
       // restore the narration (auto-read) preference; default on if never set. Read here in onMount
       // (client-only, post-hydration) rather than at module init to stay off the hydration path.
       try { const v = localStorage.getItem("claude_ui_autoread"); if (v !== null) autoRead = v === "1"; } catch {}
@@ -500,7 +506,7 @@
 <svelte:head><title>Claude</title><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /><meta name="robots" content="noindex" /></svelte:head>
 
 {#if !ready}<p class="muted">…</p>
-{:else if !admin}<p class="muted">Admins only.</p>
+{:else if !admin}<p class="muted">Admins only.{#if loginUrl} <a href={loginHref()}>Sign in as an admin</a>{/if}</p>
 {:else}
 <div class="wrap">
   <header>
