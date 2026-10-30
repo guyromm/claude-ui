@@ -384,6 +384,38 @@ def send_to_pane(pane, body):
     subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], timeout=10, check=True)
 
 
+# UPLOADS. The page stores each attached file in claude_file (api.claude_upload, chunked) and sends a
+# `cui-file:<uuid>` reference in the message body. The session can't read the DB, so on delivery each
+# reference is written to disk and replaced by the file's absolute path: Claude Code reads a typed path
+# with its Read tool (images included). The rewritten body is saved back to the row BEFORE send-keys, so
+# the transcript echo still matches it (claim + the view's dedup) and the page shows the path it sent.
+UPLOAD_DIR = os.path.expanduser(os.environ.get("CLAUDE_UI_UPLOAD_DIR") or "~/.cache/claude-ui/uploads")
+FILE_REF = _re.compile(r"cui-file:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def materialize(con, body):
+    def one(m):
+        fid = m.group(1)
+        row = con.execute("SELECT name, bytes, path FROM claude_file WHERE id = %s", (fid,)).fetchone()
+        if not row:
+            return f"[missing upload {fid[:8]}]"
+        name, data, path = row
+        if not (path and os.path.exists(path)):
+            # <dir>/<uuid>/<name>: the name stays readable for Claude, the uuid keeps two "image.png" apart.
+            # Safe characters only: the path is typed into a TUI prompt, and a space would split it.
+            safe = _re.sub(r"[^\w.-]+", "_", os.path.basename(name)).strip("._")[:120] or "file"
+            os.makedirs(UPLOAD_DIR, mode=0o700, exist_ok=True)   # mode only applies to the leaf it creates
+            d = os.path.join(UPLOAD_DIR, fid)
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            path = os.path.join(d, safe)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # shared host: owner only
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            con.execute("UPDATE claude_file SET path = %s WHERE id = %s", (path, fid))
+        return path
+    return FILE_REF.sub(one, body)
+
+
 def in_loop(con):
     print("IN: polling claude_msg for phone messages", flush=True)
     while True:
@@ -401,6 +433,9 @@ def in_loop(con):
                 else:
                     for mid, body in rows:
                         try:
+                            if FILE_REF.search(body):
+                                body = materialize(con, body)
+                                con.execute("UPDATE claude_msg SET body = %s WHERE id = %s", (body, mid))
                             send_to_pane(pane, body)
                             con.execute("UPDATE claude_msg SET delivered=true WHERE id=%s", (mid,))
                             print(f"IN: delivered #{mid} -> {pane}", flush=True)

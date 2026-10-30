@@ -1,5 +1,10 @@
 api.claude_ctl.text.FUNCTION.sql
 api.claude_send.text.FUNCTION.sql
+api.claude_upload.text,.text,.text,.uuid.FUNCTION.sql
+SCHEMA.claude_file.TABLE.sql
+SCHEMA.TABLE.claude_file.COMMENT.sql
+SCHEMA.COLUMN.claude_file.path.COMMENT.sql
+api.claude_file.VIEW.sql
 SCHEMA.claude_img.TABLE.sql
 SCHEMA.TABLE.claude_img.COMMENT.sql
 SCHEMA.COLUMN.claude_img.mime.COMMENT.sql
@@ -19,6 +24,7 @@ SCHEMA.TABLE.claude_ctl.COMMENT.sql
 SCHEMA.claude_ctl_id_seq.SEQUENCE.sql
 SCHEMA.claude_msg_id_seq.SEQUENCE.sql
 SCHEMA.claude_ctl.claude_ctl_pkey.CONSTRAINT.sql
+SCHEMA.claude_file.claude_file_pkey.CONSTRAINT.sql
 SCHEMA.claude_img.claude_img_pkey.CONSTRAINT.sql
 SCHEMA.claude_msg.claude_msg_pkey.CONSTRAINT.sql
 SCHEMA.claude_status.claude_status_pkey.CONSTRAINT.sql
@@ -27,6 +33,8 @@ SCHEMA.claude_msg_dir_id.INDEX.sql
 SCHEMA.claude_msg_src_uuid.INDEX.sql
 api.FUNCTION.claude_ctl.p_cmd.text.ACL.sql
 api.FUNCTION.claude_send.p_body.text.ACL.sql
+api.FUNCTION.claude_upload.p_name.text,.p_mime.text,.p_b64.text,.p_id.uuid.ACL.sql
+api.TABLE.claude_file.ACL.sql
 api.TABLE.claude_img.ACL.sql
 api.TABLE.claude_msg.ACL.sql
 api.TABLE.claude_status.ACL.sql

@@ -20,7 +20,7 @@ from pathlib import Path
 
 DIR = Path(__file__).parent.absolute()
 SCHEMA_DIR = DIR / "sql" / "schema"
-OWNED = re.compile(r"claude_(msg|ctl|status|send|img)")
+OWNED = re.compile(r"claude_(msg|ctl|status|send|img|file|upload)")
 
 
 def load_env():

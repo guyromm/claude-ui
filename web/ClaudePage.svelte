@@ -14,6 +14,7 @@
   export let pgrst;          // e.g. "https://api.example.com"
   export let getToken;       // () => JWT string (or null)
   export let isAdmin;        // () => boolean
+  /** @type {string | null} */
   export let loginUrl = null; // optional: the host's sign-in page, the return path is appended URL-encoded
                               // (e.g. "/login?next="). Signed out -> redirected there; else just a link.
 
@@ -209,7 +210,49 @@
       } catch { im.dataset.loaded = ""; }
     }
   }
-  afterUpdate(loadImages);
+  // ATTACHMENTS in a user message (see send()): `cui-file:<uuid>` until the relay delivers it, then the
+  // absolute path it wrote the file to (<dir>/<uuid>/<name>). Both become a placeholder that loadFiles()
+  // fills from api.claude_file: an inline image, or a chip that downloads the file.
+  const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const attach = (html) => html
+    .replace(new RegExp(`\\/[^\\s<]*\\/(${UUID})\\/([\\w.-]+)`, "g"), '<span class="cui-att" data-cui-file="$1">📎 $2</span>')
+    .replace(new RegExp(`cui-file:(${UUID})`, "g"), '<span class="cui-att" data-cui-file="$1">📎 file</span>');
+  const fileGet = async (id, select) => {
+    const r = await fetch(`${pgrst}/claude_file?id=eq.${id}&select=${select}`,
+                          { headers: { Authorization: `Bearer ${getToken()}` } });
+    return r.ok ? (await r.json())[0] : null;
+  };
+  const blobUrl = (row) => {
+    const bin = atob(row.b64); const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([u8], { type: row.mime }));
+  };
+  const size = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024) | 0} KB` : `${(n / 1048576).toFixed(1)} MB`;
+  async function loadFiles() {
+    for (const sp of document.querySelectorAll("span[data-cui-file]:not([data-loaded])")) {
+      const id = sp.dataset.cuiFile;
+      sp.dataset.loaded = "1";
+      try {
+        const meta = await fileGet(id, "name,mime,size");
+        if (!meta) { sp.textContent = `📎 [upload ${id.slice(0, 8)} unavailable]`; continue; }
+        if (meta.mime.startsWith("image/") && meta.size <= 15 * 1048576) {
+          const url = blobUrl(await fileGet(id, "mime,b64"));
+          const im = document.createElement("img");
+          im.className = "cui-img"; im.src = url; im.alt = im.title = meta.name;
+          im.onclick = () => window.open(url, "_blank", "noopener");
+          sp.replaceWith(im);
+          continue;
+        }
+        sp.textContent = `📎 ${meta.name} · ${size(meta.size)}`;
+        sp.title = "download";
+        sp.onclick = async () => {
+          const a = document.createElement("a");
+          a.href = blobUrl(await fileGet(id, "mime,b64")); a.download = meta.name; a.click();
+        };
+      } catch { sp.dataset.loaded = ""; }
+    }
+  }
+  afterUpdate(() => { loadImages(); loadFiles(); });
 
   async function fetchNew() {
     try {
@@ -305,9 +348,63 @@
   }
   const acceptSuggestion = () => useSuggestion(suggestion);
 
+  // ---------- ATTACHMENTS ----------
+  // Picked (📎), pasted or dropped files wait here until send. Each is uploaded in chunks (the host's
+  // proxy caps a request body at a few MB, a phone photo is bigger) through api.claude_upload; the
+  // message then carries `cui-file:<uuid>` references, which the relay turns into files on disk and
+  // their paths in the prompt -- so Claude reads them like any file it was pointed at.
+  let atts = [];          // {file, url (image preview) | null}
+  let uploading = "";     // progress text while sending
+  let fileEl;             // the hidden <input type=file>
+  const MAX_FILE = 50 * 1048576, CHUNK = 1048576;
+  function addFiles(list) {
+    for (const file of list || []) {
+      if (file.size > MAX_FILE) { err = `${file.name}: ${size(file.size)} is over the 50 MB limit`; continue; }
+      atts = [...atts, { file, url: file.type.startsWith("image/") ? URL.createObjectURL(file) : null }];
+    }
+  }
+  function dropAtt(i) {
+    if (atts[i].url) URL.revokeObjectURL(atts[i].url);
+    atts = atts.filter((_, j) => j !== i);
+  }
+  function onPaste(e) {
+    const files = e.clipboardData?.files;
+    if (files && files.length) { e.preventDefault(); addFiles(files); }
+  }
+  const b64 = (buf) => {
+    const u8 = new Uint8Array(buf); let s = "";
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
+  async function upload(file, n, of) {
+    let id = null;
+    for (let off = 0; off === 0 || off < file.size; off += CHUNK) {
+      uploading = `uploading ${n}/${of} · ${size(Math.min(off + CHUNK, file.size))} of ${size(file.size)}`;
+      const r = await fetch(`${pgrst}/rpc/claude_upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ p_name: file.name || "pasted", p_mime: file.type,
+                               p_b64: b64(await file.slice(off, off + CHUNK).arrayBuffer()), p_id: id }) });
+      if (!r.ok) throw new Error(`upload ${file.name}: ${r.status}`);
+      id = await r.json();
+    }
+    return id;
+  }
+
   async function send(text) {
-    const body = (text ?? draft).trim();
-    if (!body) return;
+    let body = (text ?? draft).trim();
+    if (!body && !atts.length) return;
+    if (uploading) return;
+    if (atts.length) {
+      try {
+        const ids = [];
+        for (let i = 0; i < atts.length; i++) ids.push(await upload(atts[i].file, i + 1, atts.length));
+        body = [body, "Attached: " + ids.map((id) => `cui-file:${id}`).join(" ")].filter(Boolean).join("\n\n");
+        atts.forEach((a) => a.url && URL.revokeObjectURL(a.url));
+        atts = [];
+      } catch (e) { err = e.message || "upload failed"; return; }   // draft and files stay, to retry
+      finally { uploading = ""; }
+    }
     draft = ""; interim = ""; suggestion = "";   // sending moves past the suggestion
     try {
       const r = await fetch(`${pgrst}/rpc/claude_send`, {
@@ -347,7 +444,7 @@
   // undo-last-utterance and is universally understood; "read it back" is Siri's; "new line" /
   // "new paragraph" are Dragon's and Apple's. Deliberately small -- no kitchen sink.
   const CMDS = [
-    [/^(send|send it|send message)$/,                  "send",  () => { if (draft.trim()) send(); }],
+    [/^(send|send it|send message)$/,                  "send",  () => { if (draft.trim() || atts.length) send(); }],
     [/^(clear|clear all|delete all|delete everything)$/, "cleared", () => clearDraft()],
     [/^(scratch that|undo|undo that)$/,                "undone", () => {
       // pop the draft as it was before the last committed utterance (or before the last clear)
@@ -508,7 +605,7 @@
 {#if !ready}<p class="muted">…</p>
 {:else if !admin}<p class="muted">Admins only.{#if loginUrl} <a href={loginHref()}>Sign in as an admin</a>{/if}</p>
 {:else}
-<div class="wrap">
+<div class="wrap" role="region" aria-label="chat" on:dragover|preventDefault on:drop|preventDefault={(e) => addFiles(e.dataTransfer?.files)}>
   <header>
     <b>🎙 voice</b>
     <!-- WORKING / WAITING. The whole point is knowing whether to expect a reply or to type, so it
@@ -554,7 +651,7 @@
           <div class="bubble n" title="automated alert routed through the user channel">{notifyBody(m.body)}</div>
         {:else}
           <button class="ico" on:click={() => permalink(m.id)} title="copy link to this message">🔗</button>
-          <div class="bubble u">{@html mdQuote(m.body)}</div>
+          <div class="bubble u">{@html attach(mdQuote(m.body))}</div>
         {/if}
       </div>
       {#if tsShown === m.id}
@@ -602,18 +699,35 @@
     </button>
   {/if}
 
+  {#if atts.length || uploading}
+    <!-- files waiting to go with the next message: tap ✕ to drop one -->
+    <div class="atts">
+      {#each atts as a, i (a)}
+        <span class="att" title={a.file.name}>
+          {#if a.url}<img src={a.url} alt="" />{:else}📎{/if}
+          <span class="att-n">{a.file.name || "pasted"}</span><span class="att-s">{size(a.file.size)}</span>
+          <button on:click={() => dropAtt(i)} disabled={!!uploading} title="remove">✕</button>
+        </span>
+      {/each}
+      {#if uploading}<span class="att-up">{uploading}…</span>{/if}
+    </div>
+  {/if}
+
   <!-- INPUT AT BOTTOM -->
   <footer>
+    <input type="file" multiple hidden bind:this={fileEl}
+           on:change={(e) => { addFiles(e.currentTarget.files); e.currentTarget.value = ""; }} />
+    <button class="clip" on:click={() => fileEl.click()} title="attach files (or paste / drop them)">📎</button>
     <button class="mic" class:on={listening} on:click={toggleMic} title="tap to talk">{listening ? "● listening" : "🎤"}</button>
     <!-- Ctrl/Cmd+Enter = send; plain Enter makes a newline so dictated/multi-line
          drafts don't fire off mid-composition. Tab (empty box) accepts Claude's suggestion. -->
-    <textarea class="ta" rows="2" placeholder={cmdFlash ? `✓ ${cmdFlash}` : (interim || suggestion || "message…")} bind:value={draft} bind:this={taEl}
+    <textarea class="ta" rows="2" placeholder={cmdFlash ? `✓ ${cmdFlash}` : (interim || suggestion || "message…")} bind:value={draft} bind:this={taEl} on:paste={onPaste}
               on:keydown={(e) => {
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
                 else if (e.key === "Tab" && suggestion && !draft) { e.preventDefault(); acceptSuggestion(); }
               }}></textarea>
     <button class="clr" on:click={clearDraft} disabled={!draft} title="clear">✕</button>
-    <button class="snd" on:click={() => send()} disabled={!draft.trim()} title="Ctrl+Enter">send</button>
+    <button class="snd" on:click={() => send()} disabled={(!draft.trim() && !atts.length) || !!uploading} title="Ctrl+Enter">send</button>
   </footer>
 </div>
 {/if}
@@ -758,5 +872,16 @@
   .clr:disabled { opacity: .3; }
   .snd { flex: 0 0 auto; height: 44px; border: none; border-radius: 22px; background: #1e8f4e; color: #fff; padding: 0 1.1rem; font-size: .95rem; cursor: pointer; }
   .snd:disabled { opacity: .4; }
+  .clip { flex: 0 0 auto; width: 44px; height: 44px; border: 1px solid #ccc; border-radius: 22px; background: #fff; font-size: 1.05rem; cursor: pointer; }
+  .atts { display: flex; flex-wrap: wrap; gap: .35rem; padding: .4rem .5rem 0; align-items: center; }
+  .att { display: inline-flex; align-items: center; gap: .3rem; max-width: 15rem; border: 1px solid #d5dde4; background: #f4f8fb;
+         border-radius: 10px; padding: .15rem .25rem .15rem .35rem; font-size: .8rem; color: #33404d; }
+  .att img { width: 28px; height: 28px; object-fit: cover; border-radius: 5px; }
+  .att-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .att-s { color: #8a949c; flex: 0 0 auto; }
+  .att button { border: none; background: none; color: #888; cursor: pointer; padding: 0 .2rem; }
+  .att-up { font-size: .78rem; color: #66707c; }
+  .bubble :global(.cui-att) { display: inline-block; margin: .15rem 0; padding: .1rem .5rem; border-radius: 8px; cursor: pointer;
+                              background: rgba(255,255,255,.2); border: 1px solid currentColor; font-size: .85rem; }
   :global(img.cui-img) { max-width: 100%; max-height: 70vh; border-radius: 6px; cursor: zoom-in; display: block; margin: 6px 0; }
 </style>

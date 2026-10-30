@@ -106,8 +106,8 @@ add `../claude-ui` to `server.fs.allow` if `fs.strict` is on.
 
 **Database.** `sql/apply.sh` creates, in your data schema (`@SCHEMA@`): `claude_msg` (the
 conversation, both directions, keyed to transcript uuids for dedup), `claude_ctl` (interrupt commands),
-`claude_status` (working/waiting); and in `api`: the `claude_msg` / `claude_status` views and the
-`claude_send` / `claude_ctl` RPCs. A dedicated `claude_ui` schema served as its own PostgREST profile
+`claude_status` (working/waiting), `claude_img` and `claude_file` (uploads); and in `api`: the `claude_msg` /
+`claude_status` / `claude_img` / `claude_file` views and the `claude_send` / `claude_ctl` / `claude_upload` RPCs. A dedicated `claude_ui` schema served as its own PostgREST profile
 would be the fully standalone shape.
 
 **Relay.** Run under a re-exec loop (one pass per process, so edits are live on the next pass):
@@ -120,6 +120,16 @@ Environment: `CLAUDE_VOICE_TRANSCRIPT` (the session's `.jsonl` transcript), `CLA
 (tmux target of the `claude` pane; auto-detected when unset), `CLAUDE_VOICE_POLL` (seconds, default
 2), `CLAUDE_UI_PG` / `DBURI` (DSN). The relay **exits non-zero on any infrastructure
 error** — a dead DB connection must restart the process, not be retried in place.
+
+## Attachments
+
+The composer takes files: the 📎 button (several at once), pasting an image, or dropping files on the
+page. On send, each file is uploaded in 1 MB chunks through `api.claude_upload` (the host's proxy
+caps a request body; 50 MB per file) into `claude_file`, and the message carries `cui-file:<uuid>`
+references. When the relay delivers the message it writes each file to
+`~/.cache/claude-ui/uploads/<uuid>/<name>` (owner-only; `CLAUDE_UI_UPLOAD_DIR` overrides the folder) and
+replaces the reference with that absolute path. Claude Code then reads it like any file it is
+pointed at (images included). In the page, the attachment shows inline (images) or as a download chip.
 
 ## Conventions the page relies on
 
