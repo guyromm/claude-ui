@@ -8,7 +8,7 @@
   // point: a local Kokoro-82M (kokoro-js/transformers.js) can replace it later -- deferred because an
   // npm add under the live vite dev server breaks the site (CLAUDE.md), so Kokoro needs self-hosted
   // weights + optimizeDeps wiring first. STT is webkitSpeechRecognition (Chrome/Android).
-  import { onMount, onDestroy, afterUpdate } from "svelte";
+  import { onMount, onDestroy, afterUpdate, tick } from "svelte";
   // HOST CONTRACT. This component is project-agnostic: the host route passes its PostgREST base URL,
   // its JWT getter and its admin predicate. Nothing in here imports from the host's $lib.
   export let pgrst;          // e.g. "https://api.example.com"
@@ -74,7 +74,19 @@
     for (const node of el.querySelectorAll(".m")) if (node.offsetTop > cut) n++;
     unseen = n;
   }
-  function toBottom() { el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); unseen = 0; }
+  function toBottom() { el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); unseen = 0; stick = true; }
+  // STICK TO THE BOTTOM while the reader is there: a reply arriving while you sit at the newest message (e.g.
+  // right after sending) is followed. Only the reader scrolling UP releases it (content growing, or our own smooth
+  // scroll still in flight, never does), and reaching the bottom again re-arms it -- so reading history is
+  // still never yanked, as above.
+  let stick = true, lastTop = 0;
+  function onScroll() {
+    if (!el) return;
+    if (el.scrollTop < lastTop - 4) stick = false;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 80) stick = true;
+    lastTop = el.scrollTop;
+    countUnseen();
+  }
   let taEl;               // the input textarea (auto-scroll to show the growing end)
   // IMPERATIVE scroll (a reactive `$: if (taEl…)` here crashed hydration on mobile -- it fires the
   // moment the textarea binds and something about the scheduled DOM write aborted the route hydrate,
@@ -290,7 +302,9 @@
         }
         if (followOwn && rows.some(m => m.direction === "in")) {
           followOwn = false;
-          queueMicrotask(toBottom);    // the user's OWN message: show it
+          tick().then(toBottom);       // the user's OWN message: show it
+        } else if (stick) {
+          tick().then(toBottom);       // reader is at the bottom: follow the new message
         } else {
           queueMicrotask(countUnseen); // someone else's: never scroll, just count what is below
         }
@@ -630,7 +644,7 @@
 
   <!-- CHRONOLOGICAL: oldest at top, newest at the BOTTOM just above the composer.
        New messages append at the bottom, so scroll-to-latest means scroll to scrollHeight. -->
-  <div class="log" bind:this={el} on:scroll={countUnseen}>
+  <div class="log" bind:this={el} on:scroll={onScroll}>
     {#each msgs as m (m.id)}
       <div class="m {m.direction}" id={`m${m.id}`}
            on:touchstart={(e) => pressStart(m, e)} on:touchmove={(e) => pressMove(m, e)}
