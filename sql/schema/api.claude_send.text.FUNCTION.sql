@@ -9,6 +9,7 @@ CREATE OR REPLACE FUNCTION api.claude_send(p_body text) RETURNS bigint
     IF NOT @ADMIN@ THEN RAISE EXCEPTION 'admin only'; END IF;
     IF p_body IS NULL OR length(trim(p_body)) = 0 THEN RAISE EXCEPTION 'empty'; END IF;
     INSERT INTO @SCHEMA@.claude_msg(direction, body, author) VALUES('in', trim(p_body), @WHO@) RETURNING id INTO new_id;
+    PERFORM @SCHEMA@.claude_session_touch(NULL, false, 1);   -- presence tracking: count it in the sender's visit
     RETURN new_id;
   END $$;
 

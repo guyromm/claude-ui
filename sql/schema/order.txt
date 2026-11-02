@@ -1,3 +1,6 @@
+SCHEMA.claude_who.FUNCTION.sql
+SCHEMA.claude_session.TABLE.sql
+SCHEMA.claude_session_touch.FUNCTION.sql
 api.claude_ctl.text.FUNCTION.sql
 api.claude_send.text.FUNCTION.sql
 api.claude_upload.text,.text,.text,.uuid.FUNCTION.sql
@@ -42,3 +45,7 @@ api.TABLE.claude_file.ACL.sql
 api.TABLE.claude_img.ACL.sql
 api.TABLE.claude_msg.ACL.sql
 api.TABLE.claude_status.ACL.sql
+api.claude_presence.text,.boolean.FUNCTION.sql
+api.claude_sessions.VIEW.sql
+api.FUNCTION.claude_presence.p_url.text,.p_load.boolean.ACL.sql
+api.TABLE.claude_sessions.ACL.sql

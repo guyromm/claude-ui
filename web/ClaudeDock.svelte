@@ -23,6 +23,10 @@
   // free in browsers and most sites (Ctrl+` toggles a side panel in VS Code too) and types no character,
   // so it also works while focus is in a text field, including the chat's own.
   export let hotkey = "Ctrl+Backquote";
+  // OPTIONAL presence tracking (needs the claude_session SQL): heartbeats to api.claude_presence -- one on
+  // the first load as an admin, one per in-app navigation, one every 30 s while the tab is visible. Rows:
+  // api.claude_sessions (ClaudeSessions.svelte renders them).
+  export let presence = false;
 
   // whether open/closed is remembered for the whole site ("site", the default) or per page ("page": each
   // path keeps its own mode, so the chat can stay open on one page and closed on the others). The page is
@@ -77,12 +81,26 @@
   // never shown to non-admins, whatever the host passes (the API refuses them anyway). Re-checked every
   // second: isAdmin() reads the host's session, which can change (sign in / out) without any prop changing.
   let admin = false;
-  const checkAdmin = () => { try { admin = !!isAdmin(); } catch { admin = false; } if (location.pathname !== path) path = location.pathname; };
+  const checkAdmin = () => { try { admin = !!isAdmin(); } catch { admin = false; } if (location.pathname !== path) path = location.pathname; presenceTick(); };
+  let presStarted = false, presUrl = null, presTimer;
+  function presencePing(load) {
+    try {
+      fetch(`${pgrst}/rpc/claude_presence`, { method: "POST", keepalive: true,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ p_url: location.pathname, p_load: load }) }).catch(() => {});
+    } catch {}
+  }
+  function presenceTick() {          // runs every second with checkAdmin: first load + navigations
+    if (!presence || !admin || typeof location === "undefined") return;
+    if (!presStarted) { presStarted = true; presUrl = location.pathname; presencePing(true); }
+    else if (location.pathname !== presUrl) { presUrl = location.pathname; presencePing(false); }
+  }
   let adminTimer;
   // browser-only setup in onMount, so hosts that server-render can mount the dock without a browser gate
   onMount(() => {
     checkAdmin();
     adminTimer = setInterval(checkAdmin, 1000);
+    presTimer = setInterval(() => { if (presence && admin && presStarted && !document.hidden) presencePing(false); }, 30000);
     addEventListener("resize", onResize);
     addEventListener("keydown", onKey);
   });
@@ -100,6 +118,7 @@
     removeEventListener("resize", onResize);
     removeEventListener("keydown", onKey);
     clearInterval(adminTimer);
+    clearInterval(presTimer);
     document.documentElement.classList.remove("claude-docked");
   });
 
