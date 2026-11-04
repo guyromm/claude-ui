@@ -423,7 +423,7 @@ def in_loop(con):
             # ONLY the phone's fresh delivery rows: direction='in', not yet send-keys'd, and NOT a
             # transcript mirror (src_uuid IS NULL). Transcript-mirrored turns already happened.
             rows = con.execute(
-                "SELECT id, body FROM claude_msg WHERE direction='in' AND NOT delivered AND src_uuid IS NULL"
+                "SELECT id, body, author FROM claude_msg WHERE direction='in' AND NOT delivered AND src_uuid IS NULL"
                 " AND fail_reason IS NULL ORDER BY id"
             ).fetchall()
             if rows:
@@ -431,12 +431,15 @@ def in_loop(con):
                 if not pane:
                     print("IN: no target claude pane; leaving messages queued", flush=True)
                 else:
-                    for mid, body in rows:
+                    for mid, body, author in rows:
                         try:
                             if FILE_REF.search(body):
                                 body = materialize(con, body)
                                 con.execute("UPDATE claude_msg SET body = %s WHERE id = %s", (body, mid))
-                            send_to_pane(pane, body)
+                            # WHO is talking: several admins can share one session, so each page message
+                            # reaches Claude as "[from <author>] ...". The row keeps the bare body; the
+                            # transcript echo still matches it (the claim compares the tail).
+                            send_to_pane(pane, f"[from {author}] {body}" if author else body)
                             con.execute("UPDATE claude_msg SET delivered=true WHERE id=%s", (mid,))
                             print(f"IN: delivered #{mid} -> {pane}", flush=True)
                         except Exception as e:

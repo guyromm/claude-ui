@@ -6,7 +6,8 @@ CREATE OR REPLACE VIEW api.claude_msg AS
     ts,
     direction,
     body,
-    suggest
+    suggest,
+    author
    FROM @SCHEMA@.claude_msg m
   WHERE (@ADMIN@ AND ((direction = 'out'::text) OR ((direction <> 'out'::text) AND (src_uuid IS NULL)) OR ((direction <> 'out'::text) AND (src_uuid IS NOT NULL) AND (NOT (EXISTS ( SELECT 1
            FROM @SCHEMA@.claude_msg d

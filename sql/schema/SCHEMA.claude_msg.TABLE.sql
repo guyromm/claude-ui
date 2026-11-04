@@ -10,6 +10,7 @@ CREATE TABLE @SCHEMA@.claude_msg (
     src_uuid text,
     suggest text,
     fail_reason text,
+    author text,
     CONSTRAINT claude_msg_direction_check CHECK ((direction = ANY (ARRAY['in'::text, 'out'::text, 'sys'::text])))
 );
 

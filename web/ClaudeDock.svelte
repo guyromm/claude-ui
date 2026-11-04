@@ -15,12 +15,35 @@
   export let isAdmin;
   export let hidden = false;          // host hides the dock, e.g. on its full-page claude route
   export let storageKey = "claude_ui_dock";
+  // keyboard toggle (closed <-> the last open mode), e.g. "Ctrl+Backquote", "Alt+Shift+KeyK"; false = none.
+  // Modifiers + a KeyboardEvent.code, so it is the physical key in any layout (Hebrew too). The default is
+  // free in browsers and most sites (Ctrl+` toggles a side panel in VS Code too) and types no character,
+  // so it also works while focus is in a text field, including the chat's own.
+  export let hotkey = "Ctrl+Backquote";
 
   const SIDE_MIN = 1000;              // narrower than this, "side" falls back to the popup
   let mode = "closed";                // closed | popup | side
   let w = 440;
-  try { ({ mode = "closed", w = 440 } = JSON.parse(localStorage.getItem(storageKey) ?? "{}")); } catch {}
-  $: try { localStorage.setItem(storageKey, JSON.stringify({ mode, w })); } catch {}
+  let last = "popup";                 // the open mode the hotkey and launcher return to
+  try { ({ mode = "closed", w = 440, last = "popup" } = JSON.parse(localStorage.getItem(storageKey) ?? "{}")); } catch {}
+  $: if (mode !== "closed") last = mode;
+  $: try { localStorage.setItem(storageKey, JSON.stringify({ mode, w, last })); } catch {}
+
+  $: keys = parseHotkey(hotkey);
+  $: hint = keys ? String(hotkey).replace(/Backquote/, "`").replace(/Key([A-Z])|Digit(\d)/g, "$1$2") : "";
+  function parseHotkey(h) {
+    if (!h) return null;
+    const parts = String(h).split("+").map((x) => x.trim());
+    const code = parts.pop();
+    const mods = new Set(parts.map((x) => x.toLowerCase()));
+    return { code, ctrl: mods.has("ctrl"), alt: mods.has("alt"), shift: mods.has("shift"), meta: mods.has("meta") };
+  }
+  function onKey(e) {
+    if (off || !keys || e.repeat || e.code !== keys.code || e.ctrlKey !== keys.ctrl || e.altKey !== keys.alt
+        || e.shiftKey !== keys.shift || e.metaKey !== keys.meta) return;
+    e.preventDefault();
+    mode = mode === "closed" ? last : "closed";
+  }
 
   let vw = typeof window === "undefined" ? 0 : window.innerWidth;
   const onResize = () => (vw = window.innerWidth);
@@ -34,6 +57,7 @@
     checkAdmin();
     adminTimer = setInterval(checkAdmin, 1000);
     addEventListener("resize", onResize);
+    addEventListener("keydown", onKey);
   });
   $: off = hidden || !admin;
   $: shown = off ? "closed" : mode === "side" && vw < SIDE_MIN ? "popup" : mode;
@@ -47,6 +71,7 @@
   onDestroy(() => {
     if (typeof window === "undefined") return;
     removeEventListener("resize", onResize);
+    removeEventListener("keydown", onKey);
     clearInterval(adminTimer);
     document.documentElement.classList.remove("claude-docked");
   });
@@ -63,7 +88,8 @@
 
 {#if shown === "closed"}
   {#if !off}
-    <button class="cui-launch" on:click={() => (mode = "popup")} title="Chat with Claude" aria-label="Chat with Claude">💬</button>
+    <button class="cui-launch" on:click={() => (mode = last)}
+            title={hint ? `Chat with Claude (${hint})` : "Chat with Claude"} aria-label="Chat with Claude" aria-keyshortcuts={hint || undefined}>💬</button>
   {/if}
 {:else}
   <aside class="cui-dock {shown}" style:--w="{w}px" aria-label="Claude chat">
@@ -75,7 +101,7 @@
         <button on:click={() => (mode = shown === "side" ? "popup" : "side")}
                 title={shown === "side" ? "Float as a popup" : "Pin to the side of the page"}>{shown === "side" ? "⧉" : "◨"}</button>
       {/if}
-      <button on:click={() => (mode = "closed")} title="Close" aria-label="Close">×</button>
+      <button on:click={() => (mode = "closed")} title={hint ? `Close (${hint})` : "Close"} aria-label="Close">×</button>
     </div>
     <ClaudePage {pgrst} {getToken} {isAdmin} />
   </aside>

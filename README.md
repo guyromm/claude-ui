@@ -100,6 +100,15 @@ once in the root layout, so it stays mounted across navigation; state and width 
 - `hidden` — hide it, e.g. on the route that already shows ClaudePage full page. Non-admins never see it
   (it re-checks `isAdmin()` every second, so sign-in/out applies without a prop change).
 - `storageKey` — localStorage key for its state (default `claude_ui_dock`).
+- `hotkey` — keyboard toggle, closed <-> the last open mode (popup or side), default `"Ctrl+Backquote"`
+  (Ctrl+\`). Modifiers (`Ctrl`, `Alt`, `Shift`, `Meta`) plus a `KeyboardEvent.code`, so it is the
+  physical key in any keyboard layout, e.g. `"Alt+Shift+KeyK"`; `false` turns it off. Pick one that
+  doesn't collide with the host's own shortcuts; the default is free in browsers and types no character,
+  so it also works while typing in a field (including the chat's own, to close it). The launcher and the
+  close button show it in their tooltips.
+
+Opening the chat (dock or full page) puts the cursor in its input, except on touch screens (it would pop
+the on-screen keyboard up over the conversation).
 
 In `svelte.config.js`: `kit.alias = { '$claude-ui': '../claude-ui/web' }`, and in `vite.config.js`
 add `../claude-ui` to `server.fs.allow` if `fs.strict` is on.

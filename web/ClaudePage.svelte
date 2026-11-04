@@ -26,7 +26,7 @@
   // The server is not slow: HTML 5ms, API 16ms, payload 16kB. Saying "empty" while still
   // loading is a lie the user has to wait 15 seconds to see corrected.
   let loadingMsgs = true;
-  let msgs = [];          // {id, direction, body, ts}
+  let msgs = [];          // {id, direction, body, ts, suggest, author}
   let lastId = 0;
   let autoRead = true;    // speak new assistant messages automatically
   let listening = false;  // mic on
@@ -505,6 +505,8 @@
   // a "user system" message -- so they get their own purple treatment: same side as the user,
   // because that is where they come from, but visibly not a human utterance.
   const isNotify = (m) => m.direction === "in" && /^\s*NOTIFY:/.test(m.body || "");
+  // several admins can share one session: once more than one has written, each user turn shows who sent it
+  $: multiAuthor = new Set(msgs.filter((m) => m.direction === "in" && m.author).map((m) => m.author)).size > 1;
   // the violet already says "this is an alert", so the literal prefix is redundant ink on a
   // narrow phone column. Stripped for DISPLAY only -- claude_msg.body keeps it verbatim, which
   // is what isNotify() and every downstream reader match on.
@@ -578,8 +580,18 @@
 
   const loginHref = () => loginUrl + encodeURIComponent(location.pathname + location.search + location.hash);
 
+  // put the cursor in the input on open (full page or dock popup), so the user can type at once. The
+  // textarea renders only after the first load, so retry briefly. Imperative, from onMount (see scrollTa).
+  // Not on touch screens: focusing there pops the on-screen keyboard up over the conversation.
+  function focusInput(tries = 30) {
+    if (matchMedia("(pointer: coarse)").matches) return;
+    if (taEl) taEl.focus({ preventScroll: true });
+    else if (tries > 0) setTimeout(() => focusInput(tries - 1), 100);
+  }
+
   onMount(() => {
     document.addEventListener("selectionchange", onSelect);
+    focusInput();
     // ready=true FIRST and in a finally: a throw in isAdmin()/getToken() (some mobile privacy modes
     // make localStorage access throw) must never leave the page stuck on the "…" loading state.
     try {
@@ -665,7 +677,7 @@
           <div class="bubble n" title="automated alert routed through the user channel">{notifyBody(m.body)}</div>
         {:else}
           <button class="ico" on:click={() => permalink(m.id)} title="copy link to this message">🔗</button>
-          <div class="bubble u">{@html attach(mdQuote(m.body))}</div>
+          <div class="bubble u">{#if multiAuthor && m.author}<span class="who">{m.author}</span>{/if}{@html attach(mdQuote(m.body))}</div>
         {/if}
       </div>
       {#if tsShown === m.id}
@@ -850,6 +862,7 @@
                                 border-left: 3px solid currentColor; opacity: .72;
                                 white-space: pre-wrap; }
   .bubble.a :global(blockquote) { border-left-color: #c7d0d8; color: #55606b; opacity: 1; }
+  .who { display: block; font-size: .7rem; font-weight: 700; opacity: .75; margin-bottom: .1rem; }
   .tsline { font-size: .7rem; color: #8a949c; padding: 0 .3rem; margin: -.15rem 0 .2rem;
             font-variant-numeric: tabular-nums; }
   .tsline.out, .tsline.sys { align-self: flex-start; }
