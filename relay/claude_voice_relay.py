@@ -416,6 +416,22 @@ def materialize(con, body):
     return FILE_REF.sub(one, body)
 
 
+AUTHOR_PREFIX = (os.environ.get("CLAUDE_UI_AUTHOR_PREFIX") or "auto").strip().lower()   # auto | always | never
+
+
+def multi_admin(con):
+    """Should page messages carry the "[from <author>]" prefix? CLAUDE_UI_AUTHOR_PREFIX=always|never forces it;
+    auto (default) = this host has seen more than one distinct author, i.e. it is really multi-admin (as of
+    11-12 only miko). A second admin's first message is already prefixed: its row is in the table when we ask."""
+    if AUTHOR_PREFIX in ("always", "1", "true", "yes"):
+        return True
+    if AUTHOR_PREFIX in ("never", "0", "false", "no"):
+        return False
+    return con.execute(
+        "SELECT count(DISTINCT author) > 1 FROM claude_msg WHERE direction='in' AND author IS NOT NULL"
+    ).fetchone()[0]
+
+
 def in_loop(con):
     print("IN: polling claude_msg for phone messages", flush=True)
     while True:
@@ -436,10 +452,11 @@ def in_loop(con):
                             if FILE_REF.search(body):
                                 body = materialize(con, body)
                                 con.execute("UPDATE claude_msg SET body = %s WHERE id = %s", (body, mid))
-                            # WHO is talking: several admins can share one session, so each page message
-                            # reaches Claude as "[from <author>] ...". The row keeps the bare body; the
-                            # transcript echo still matches it (the claim compares the tail).
-                            send_to_pane(pane, f"[from {author}] {body}" if author else body)
+                            # WHO is talking: when several admins share one session, each page message
+                            # reaches Claude as "[from <author>] ...". On a single-admin host the prefix
+                            # is noise, so it is added only when multi_admin(). The row keeps the bare
+                            # body; the transcript echo still matches it (the claim compares the tail).
+                            send_to_pane(pane, f"[from {author}] {body}" if author and multi_admin(con) else body)
                             con.execute("UPDATE claude_msg SET delivered=true WHERE id=%s", (mid,))
                             print(f"IN: delivered #{mid} -> {pane}", flush=True)
                         except Exception as e:

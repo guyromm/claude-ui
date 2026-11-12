@@ -130,6 +130,11 @@ Environment: `CLAUDE_VOICE_TRANSCRIPT` (the session's `.jsonl` transcript), `CLA
 2), `CLAUDE_UI_PG` / `DBURI` (DSN). The relay **exits non-zero on any infrastructure
 error** — a dead DB connection must restart the process, not be retried in place.
 
+**Who is talking.** `api.claude_send` stores the sender in `claude_msg.author`. On a multi-admin host the relay
+types each page message as `[from <author>] <text>` so the session knows which admin is talking; on a single-admin
+host the prefix is noise and is left out. `CLAUDE_UI_AUTHOR_PREFIX`: `auto` (default: prefix once more than one
+distinct author has sent messages), `always`, `never`.
+
 ## Attachments
 
 The composer takes files: the 📎 button (several at once), pasting an image, or dropping files on the
