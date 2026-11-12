@@ -133,7 +133,7 @@
       blk.replace(/\n$/, "").split("\n").map((l) => l.replace(/^&gt;\s?/, "")).join("\n") +
       "</blockquote>");
     s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    // Autolink BARE urls (we post them on their own line, not as [text](url)). The leading boundary
+    // Autolink BARE urls anywhere in a line (agents link everything they mention: AGENTS.md). The leading boundary
     // (start | whitespace | '(') means a url already inside href="..." (preceded by '"') or as anchor
     // text (preceded by '>') is NOT re-matched, so this is safe to run after the markdown-link pass.
     // Trailing sentence punctuation is left outside the link.

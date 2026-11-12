@@ -147,7 +147,8 @@ pointed at (images included). In the page, the attachment shows inline (images) 
 
 ## Conventions the page relies on
 
-- A URL is autolinked only when it sits **alone on its own line**; put links on their own line.
+- URLs are autolinked anywhere in a line, and `[text](url)` markdown links work too.
+- **Agents read through this page must link everything they mention: see [AGENTS.md](AGENTS.md).** Hosts put a pointer to it in their CLAUDE.md.
 - A reply may end with `@@suggest: <text>`; the relay strips it and the page shows it as a one-tap
   suggested reply.
 - Voice commands are whole-utterance only ("send" sends; "send the summary" is text), matched on the
