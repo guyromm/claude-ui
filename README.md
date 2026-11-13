@@ -100,12 +100,34 @@ once in the root layout, so it stays mounted across navigation; state and width 
 - `hidden` — hide it, e.g. on the route that already shows ClaudePage full page. Non-admins never see it
   (it re-checks `isAdmin()` every second, so sign-in/out applies without a prop change).
 - `storageKey` — localStorage key for its state (default `claude_ui_dock`).
+- `openState` — `"site"` (default): one open/closed state for the whole site; `"page"`: each page remembers
+  its own (open on one page, closed on the others). The page is `pageKey` if given (e.g. SvelteKit's
+  `page.url.pathname`, exact on client-side navigation), else `location.pathname`, checked every second.
+  The side panel's width stays site-wide.
 - `hotkey` — keyboard toggle, closed <-> the last open mode (popup or side), default `"Ctrl+Backquote"`
   (Ctrl+\`). Modifiers (`Ctrl`, `Alt`, `Shift`, `Meta`) plus a `KeyboardEvent.code`, so it is the
   physical key in any keyboard layout, e.g. `"Alt+Shift+KeyK"`; `false` turns it off. Pick one that
   doesn't collide with the host's own shortcuts; the default is free in browsers and types no character,
   so it also works while typing in a field (including the chat's own, to close it). The launcher and the
   close button show it in their tooltips.
+
+**Optional: rendering plug-ins.** Both components take `renderers`, the host's own references turned into
+links (or any element) in the rendered messages, both directions:
+
+```js
+renderers={[{ pattern: /#(\d+)\b/g, render: (m) => { const a = document.createElement("a");
+  a.href = `/items/${m[1]}`; a.textContent = m[0]; return a; } }]}
+```
+
+Each `pattern` runs on the text of every message outside links and code; the earliest match wins (the first
+renderer on a tie), and `render(match)` returns a Node, or `null` to leave the text alone. It must return at
+once: fill slow parts (a tooltip's data) into the node later. The node is the host's DOM, so style it with
+the host's global CSS. Example: board links `#119/3` to its task with a hover card of title, state and
+"needs you" (board's `web/src/lib/claudeRenderers.ts`).
+
+Scrolling: the log follows new messages, your own included, only while you are at the bottom. Reading
+history, nothing moves; a counter shows what arrived below. A reload (F5, an HMR full reload) comes back to
+the message you were reading (this tab's sessionStorage), or to the newest if you were at the bottom.
 
 Opening the chat (dock or full page) puts the cursor in its input, except on touch screens (it would pop
 the on-screen keyboard up over the conversation).

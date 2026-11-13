@@ -1,3 +1,9 @@
+<script context="module">
+  // first line of the page context an embedded chat (ClaudeDock) puts before every sent message;
+  // the session needs it, the viewer does not (they know which page they are on), so hideContext drops it from display
+  export const PAGE_MARK = "[sent from page]";
+</script>
+
 <script>
   // VOICE BRIDGE: hands-free two-way chat with a running Claude Code session, for use
   // on the go. OUT = assistant messages the relay mirrors from the session transcript into
@@ -17,6 +23,16 @@
   /** @type {string | null} */
   export let loginUrl = null; // optional: the host's sign-in page, the return path is appended URL-encoded
                               // (e.g. "/login?next="). Signed out -> redirected there; else just a link.
+  /** @type {(() => string) | null} */
+  export let context = null;  // optional: () => a line put first in every sent message (ClaudeDock: the page URL)
+  export let hideContext = false; // true: user bubbles don't show a leading PAGE_MARK block (popup/panel chats)
+  // RENDERING PLUG-INS (optional): the host turns its own references in the text into links, e.g. board's
+  // "#119/3" -> its task. Each is { pattern: RegExp (global), render(match) -> Node | null }: run on every
+  // text node of a rendered message outside links and code, earliest match first (the first renderer wins a
+  // tie); null leaves the match as text. render() must answer at once; anything slow (a tooltip's data) is
+  // filled into the returned node later. See README "Rendering plug-ins".
+  /** @type {{ pattern: RegExp, render: (m: RegExpExecArray) => Node | null }[]} */
+  export let renderers = [];
 
   let ready = false, admin = false, err = "";
   // TRUE until the first message fetch settles. Without it the page rendered "No messages yet"
@@ -59,6 +75,7 @@
   let busySince = null;
   let suggestion = "";    // Claude's suggested next prompt (@@suggest: on its turn); Tab accepts it
   let poll = null, rec = null;
+  /** @type {HTMLElement} */
   let el;                 // scroll container
   // UNREAD COUNTER INSTEAD OF AUTOSCROLL ("do not touch the viewport").
   // Being yanked to the bottom mid-read every time an alert lands is hostile, and with NOTIFY
@@ -71,7 +88,7 @@
     if (el.scrollHeight - el.scrollTop - el.clientHeight <= slack) { unseen = 0; return; }
     const cut = el.scrollTop + el.clientHeight;
     let n = 0;
-    for (const node of el.querySelectorAll(".m")) if (node.offsetTop > cut) n++;
+    for (const node of /** @type {NodeListOf<HTMLElement>} */ (el.querySelectorAll(".m"))) if (node.offsetTop > cut) n++;
     unseen = n;
   }
   function toBottom() { el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); unseen = 0; stick = true; }
@@ -80,12 +97,69 @@
   // scroll still in flight, never does), and reaching the bottom again re-arms it -- so reading history is
   // still never yanked, as above.
   let stick = true, lastTop = 0;
+  // HISTORY ON DEMAND (guy, 11-13: "scroll up and load history on demand"). The page starts with the newest
+  // 25; scrolling near the top (or the button there) fetches the 50 before the oldest shown, prepends them and
+  // keeps the reader's view still (scrollTop grows by exactly the added height). noMore once a page comes back
+  // short. Bounded like every other fetch here: id=lt + limit, never the whole table.
+  const OLDER = 50;
+  let loadingOlder = false, noMore = false;
+  async function loadOlder() {
+    if (loadingOlder || noMore || !el || !msgs.length) return;
+    loadingOlder = true;
+    try {
+      const oldest = msgs[0].id;
+      const r = await fetch(`${pgrst}/claude_msg?id=lt.${oldest}&order=id.desc&limit=${OLDER}`,
+                            { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (!r.ok) { err = `history ${r.status}`; return; }
+      /** @type {any[]} */
+      const rows = await r.json();
+      if (rows.length < OLDER) noMore = true;
+      if (!rows.length) return;
+      const have = new Set(msgs.map((m) => m.id));
+      const add = rows.reverse().filter((m) => !have.has(m.id));
+      const h0 = el.scrollHeight, t0 = el.scrollTop;
+      msgs = [...add, ...msgs];
+      await tick();
+      el.scrollTop = t0 + (el.scrollHeight - h0);
+      lastTop = el.scrollTop;
+    } catch { err = "history failed"; } finally { loadingOlder = false; }
+  }
   function onScroll() {
     if (!el) return;
+    if (el.scrollTop < 300 && !loadingMsgs) loadOlder();
     if (el.scrollTop < lastTop - 4) stick = false;
     if (el.scrollHeight - el.scrollTop - el.clientHeight <= 80) stick = true;
     lastTop = el.scrollTop;
     countUnseen();
+    savePlace();
+  }
+  // KEEP THE PLACE ACROSS A RELOAD (an HMR full reload, F5): the message at the top of the view and how far
+  // into it, in sessionStorage (this tab only; a URL hash would leak into shared links and clash with the
+  // host's own on the dock). At the bottom nothing is kept, so a reload shows the newest as before.
+  const PLACE = "claude_ui_place";
+  /** @param {Element} node */
+  const topIn = (node) => node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let placeT;
+  function savePlace() {
+    clearTimeout(placeT);
+    placeT = setTimeout(() => {
+      if (!el) return;
+      try {
+        if (stick) { sessionStorage.removeItem(PLACE); return; }
+        for (const node of el.querySelectorAll(".m[id]")) {
+          const top = topIn(node);
+          if (top + node.getBoundingClientRect().height > el.scrollTop) {
+            sessionStorage.setItem(PLACE, JSON.stringify({ id: +node.id.slice(1), dy: el.scrollTop - top }));
+            return;
+          }
+        }
+      } catch {}
+    }, 250);
+  }
+  /** @returns {{ id: number, dy: number } | null} */
+  function savedPlace() {
+    try { const p = JSON.parse(sessionStorage.getItem(PLACE) || "null"); return p && p.id > 0 ? p : null; } catch { return null; }
   }
   let taEl;               // the input textarea (auto-scroll to show the growing end)
   // IMPERATIVE scroll (a reactive `$: if (taEl…)` here crashed hydration on mobile -- it fires the
@@ -167,6 +241,44 @@
     let html = out.join("\n");
     html = html.replace(/@@BLK(\d+)@@/g, (_, i) => blocks[+i]);   // restore code blocks
     return html;
+  }
+  /** @param {HTMLElement} root */
+  function applyRenderers(root) {
+    if (!renderers.length) return;
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    /** @type {Text[]} */
+    const nodes = [];
+    for (let n = walk.nextNode(); n; n = walk.nextNode())
+      if (!n.parentElement?.closest("a, code, pre, [data-cui-r]")) nodes.push(/** @type {Text} */ (n));
+    for (const t of nodes) {
+      const hits = [];
+      for (const r of renderers) {
+        const re = new RegExp(r.pattern.source, r.pattern.flags.includes("g") ? r.pattern.flags : r.pattern.flags + "g");
+        for (const m of t.data.matchAll(re)) if (m[0]) hits.push({ m, r });
+      }
+      if (!hits.length) continue;
+      hits.sort((x, y) => x.m.index - y.m.index);
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      for (const { m, r } of hits) {
+        if (m.index < last) continue;               // overlaps an earlier match
+        let node = null;
+        try { node = r.render(m); } catch {}
+        if (!node) continue;
+        if (node instanceof Element) node.setAttribute("data-cui-r", "");
+        frag.append(t.data.slice(last, m.index), node);
+        last = m.index + m[0].length;
+      }
+      if (!last) continue;
+      frag.append(t.data.slice(last));
+      t.replaceWith(frag);
+    }
+  }
+  // a Svelte action on each message bubble: run the plug-ins on its {@html} content, again when it changes
+  /** @param {HTMLElement} node @param {string} _body (only to re-run when it changes) */
+  function plug(node, _body) {
+    applyRenderers(node);
+    return { update() { tick().then(() => applyRenderers(node)); } };
   }
   // strip markdown for the SPOKEN version (don't read "asterisk asterisk")
   const toPlain = (s) => (s || "")
@@ -419,6 +531,7 @@
       } catch (e) { err = e.message || "upload failed"; return; }   // draft and files stay, to retry
       finally { uploading = ""; }
     }
+    if (context) body = context() + "\n\n" + body;
     draft = ""; interim = ""; suggestion = "";   // sending moves past the suggestion
     try {
       const r = await fetch(`${pgrst}/rpc/claude_send`, {
@@ -433,7 +546,9 @@
       // message YOU just sent. Combined with the no-echo delay that is exactly what it did: the text
       // vanished from the composer and appeared 2s later below the fold, so a sent message looked
       // lost. Arm a one-shot: the next poll that carries an inbound row scrolls.
-      followOwn = true;
+      // Only when the reader is AT the bottom, though: answering something up in the history must not
+      // throw away the place being read (the unseen counter shows the message landed below).
+      followOwn = stick;
     } catch { err = "send failed"; }
   }
 
@@ -511,6 +626,9 @@
   // narrow phone column. Stripped for DISPLAY only -- claude_msg.body keeps it verbatim, which
   // is what isNotify() and every downstream reader match on.
   const notifyBody = (b) => (b || "").replace(/^\s*NOTIFY:\s*/, "");
+  // the page-context block (PAGE_MARK, the URL, a blank line) is display-stripped like the NOTIFY prefix:
+  // claude_msg.body keeps it, the full-page chat still shows it (there the page is not obvious)
+  const userBody = (/** @type {string} */ b) => hideContext && (b || "").startsWith(PAGE_MARK + "\n") ? b.replace(/^[^\n]*\n[^\n]*(\n\n|$)/, "") : b;
   const stamp = (t) => t ? new Date(t).toLocaleString([], { month: "short", day: "numeric",
                             hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
   function pressStart(m, e) {
@@ -602,16 +720,24 @@
       // (client-only, post-hydration) rather than at module init to stay off the hydration path.
       try { const v = localStorage.getItem("claude_ui_autoread"); if (v !== null) autoRead = v === "1"; } catch {}
       if (admin) {
-        // seed lastId to the newest so we don't replay the whole history / TTS-flood on load
-        fetch(`${pgrst}/claude_msg?order=id.desc&limit=25`, { headers: { Authorization: `Bearer ${getToken()}` } })
+        // seed lastId to the newest so we don't replay the whole history / TTS-flood on load.
+        // The last 25 messages, or everything from the message to show on (a permalink #m<id>, or the
+        // place read before a reload) when that is older, up to 300.
+        const h = (location.hash || "").match(/^#m(\d+)$/);
+        const back = h ? null : savedPlace();
+        const from = h ? +h[1] : back ? back.id : 0;
+        fetch(`${pgrst}/claude_msg?order=id.desc&limit=${from ? 300 : 25}`, { headers: { Authorization: `Bearer ${getToken()}` } })
           .then((r) => r.ok ? r.json() : [])
-          .then((rows) => { msgs = rows.reverse(); lastId = rows.length ? Math.max(...rows.map((m) => m.id)) : 0;
+          .then((rows) => { if (from && rows.length > 25) { const i = rows.findIndex((/** @type {{ id: number }} */ m) => m.id <= from); rows = rows.slice(0, Math.max(25, i < 0 ? 25 : i + 1)); }
+                            if (!from && rows.length < 25) noMore = true;
+                            msgs = rows.reverse(); lastId = rows.length ? Math.max(...rows.map((m) => m.id)) : 0;
                             { const s = [...msgs].reverse().find((m) => m.direction === "out" && m.suggest); if (s) suggestion = s.suggest; }
-                            queueMicrotask(() => {
-                              // opened via a permalink (#m<id>)? scroll to & flash it; else go to newest.
-                              const h = (location.hash || "").match(/^#m(\d+)$/);
+                            tick().then(() => {
+                              // opened via a permalink? scroll to & flash it; back from a reload? the same place; else the newest.
                               const node = h && document.getElementById(`m${h[1]}`);
+                              const prev = back && document.getElementById(`m${back.id}`);
                               if (node) { node.scrollIntoView({ block: "center" }); flashMsg(h[1]); }
+                              else if (prev && el) { el.scrollTop = topIn(prev) + back.dy; stick = false; lastTop = el.scrollTop; countUnseen(); }
                               else el?.scrollTo(0, el.scrollHeight);
                             }); })
           .catch(() => {})
@@ -657,6 +783,12 @@
   <!-- CHRONOLOGICAL: oldest at top, newest at the BOTTOM just above the composer.
        New messages append at the bottom, so scroll-to-latest means scroll to scrollHeight. -->
   <div class="log" bind:this={el} on:scroll={onScroll}>
+    {#if !loadingMsgs && msgs.length}
+      <div class="older">
+        {#if noMore}<span class="muted">start of the conversation</span>
+        {:else}<button class="olderbtn" on:click={loadOlder} disabled={loadingOlder}>{loadingOlder ? "loading…" : "load earlier messages"}</button>{/if}
+      </div>
+    {/if}
     {#each msgs as m (m.id)}
       <div class="m {m.direction}" id={`m${m.id}`}
            on:touchstart={(e) => pressStart(m, e)} on:touchmove={(e) => pressMove(m, e)}
@@ -664,7 +796,7 @@
            on:mousedown={(e) => pressStart(m, e)} on:mousemove={(e) => pressMove(m, e)}
            on:mouseup={pressEnd} on:mouseleave={pressEnd}>
         {#if m.direction === "out"}
-          <div class="bubble a">{@html md(m.body)}</div>
+          <div class="bubble a" use:plug={m.body}>{@html md(m.body)}</div>
           <span class="acts">
             <button class="ico" on:click={() => permalink(m.id)} title="copy link to this message">🔗</button>
             <button class="ico" on:click={() => speak(m.body)} title="read aloud">🔊</button>
@@ -677,7 +809,7 @@
           <div class="bubble n" title="automated alert routed through the user channel">{notifyBody(m.body)}</div>
         {:else}
           <button class="ico" on:click={() => permalink(m.id)} title="copy link to this message">🔗</button>
-          <div class="bubble u">{#if multiAuthor && m.author}<span class="who">{m.author}</span>{/if}{@html attach(mdQuote(m.body))}</div>
+          <div class="bubble u" use:plug={m.body}>{#if multiAuthor && m.author}<span class="who">{m.author}</span>{/if}{@html attach(mdQuote(userBody(m.body)))}</div>
         {/if}
       </div>
       {#if tsShown === m.id}
@@ -911,4 +1043,6 @@
   .bubble :global(.cui-att) { display: inline-block; margin: .15rem 0; padding: .1rem .5rem; border-radius: 8px; cursor: pointer;
                               background: rgba(255,255,255,.2); border: 1px solid currentColor; font-size: .85rem; }
   :global(img.cui-img) { max-width: 100%; max-height: 70vh; border-radius: 6px; cursor: zoom-in; display: block; margin: 6px 0; }
+  .older { text-align: center; padding: 6px 0 10px; font-size: 0.8em; }
+  .olderbtn { font-size: 0.85em; padding: 3px 10px; opacity: 0.85; }
 </style>

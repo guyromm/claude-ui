@@ -8,26 +8,52 @@
   //             edge; the page makes room for it (body margin), so nothing is hidden behind it
   // State and width are per browser (localStorage). Closing unmounts ClaudePage, which stops its polling.
   import { onMount, onDestroy } from "svelte";
-  import ClaudePage from "./ClaudePage.svelte";
+  import ClaudePage, { PAGE_MARK } from "./ClaudePage.svelte";
   // HOST CONTRACT: ClaudePage's three props, plus
   export let pgrst;
   export let getToken;
   export let isAdmin;
   export let hidden = false;          // host hides the dock, e.g. on its full-page claude route
   export let storageKey = "claude_ui_dock";
+  /** @type {{ pattern: RegExp, render: (m: RegExpExecArray) => Node | null }[]} */
+  export let renderers = [];         // ClaudePage's rendering plug-ins, passed through
   // keyboard toggle (closed <-> the last open mode), e.g. "Ctrl+Backquote", "Alt+Shift+KeyK"; false = none.
   // Modifiers + a KeyboardEvent.code, so it is the physical key in any layout (Hebrew too). The default is
   // free in browsers and most sites (Ctrl+` toggles a side panel in VS Code too) and types no character,
   // so it also works while focus is in a text field, including the chat's own.
   export let hotkey = "Ctrl+Backquote";
 
+  // whether open/closed is remembered for the whole site ("site", the default) or per page ("page": each
+  // path keeps its own mode, so the chat can stay open on one page and closed on the others). The page is
+  // `pageKey` when the host passes one (e.g. SvelteKit's page.url.pathname, exact on client navigation),
+  // else location.pathname, re-read every second. The panel width is site-wide either way.
+  /** @type {"site" | "page"} */
+  export let openState = "site";
+  /** @type {string | null} */
+  export let pageKey = null;
+
   const SIDE_MIN = 1000;              // narrower than this, "side" falls back to the popup
   let mode = "closed";                // closed | popup | side
   let w = 440;
   let last = "popup";                 // the open mode the hotkey and launcher return to
-  try { ({ mode = "closed", w = 440, last = "popup" } = JSON.parse(localStorage.getItem(storageKey) ?? "{}")); } catch {}
+  /** @param {string} k */
+  const read = (k) => { try { return JSON.parse(localStorage.getItem(k) ?? "{}"); } catch { return {}; } };
+  ({ w = 440 } = read(storageKey));
+  let path = typeof location === "undefined" ? "" : location.pathname;
+  $: pkey = openState === "page" ? (pageKey ?? path) : null;
+  /** @param {string | null | undefined} k */
+  const slot = (k) => (k == null ? storageKey : `${storageKey}:page:${k}`);
+  /** @type {string | null | undefined} */
+  let loadedFor;
+  $: if (pkey !== loadedFor) { loadedFor = pkey; ({ mode = "closed", last = "popup" } = read(slot(pkey))); }
   $: if (mode !== "closed") last = mode;
-  $: try { localStorage.setItem(storageKey, JSON.stringify({ mode, w, last })); } catch {}
+  $: try {
+    if (loadedFor == null) localStorage.setItem(storageKey, JSON.stringify({ mode, w, last }));
+    else {
+      localStorage.setItem(slot(loadedFor), JSON.stringify({ mode, last }));
+      localStorage.setItem(storageKey, JSON.stringify({ ...read(storageKey), w }));
+    }
+  } catch {}
 
   $: keys = parseHotkey(hotkey);
   $: hint = keys ? String(hotkey).replace(/Backquote/, "`").replace(/Key([A-Z])|Digit(\d)/g, "$1$2") : "";
@@ -50,7 +76,7 @@
   // never shown to non-admins, whatever the host passes (the API refuses them anyway). Re-checked every
   // second: isAdmin() reads the host's session, which can change (sign in / out) without any prop changing.
   let admin = false;
-  const checkAdmin = () => { try { admin = !!isAdmin(); } catch { admin = false; } };
+  const checkAdmin = () => { try { admin = !!isAdmin(); } catch { admin = false; } if (location.pathname !== path) path = location.pathname; };
   let adminTimer;
   // browser-only setup in onMount, so hosts that server-render can mount the dock without a browser gate
   onMount(() => {
@@ -103,7 +129,9 @@
       {/if}
       <button on:click={() => (mode = "closed")} title={hint ? `Close (${hint})` : "Close"} aria-label="Close">×</button>
     </div>
-    <ClaudePage {pgrst} {getToken} {isAdmin} />
+    <!-- every message says which page it was sent from: the session cannot see the viewer's screen;
+         the viewer can, so the dock does not echo it back in the bubbles -->
+    <ClaudePage {pgrst} {getToken} {isAdmin} {renderers} context={() => PAGE_MARK + "\n" + location.href} hideContext />
   </aside>
 {/if}
 

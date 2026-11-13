@@ -335,18 +335,22 @@ def out_loop(con):
                         # time. Claim that row instead: attach this uuid to the newest recent delivered
                         # page row whose body matches (exactly, or as the tail of the transcript text --
                         # a stray char already in the pane's input can prefix it, e.g. "c" + "ok, ...").
+                        # Compared WHITESPACE-NORMALIZED: send_to_pane collapses newlines to spaces, so a
+                        # multi-line body (the dock's "[sent from page]\n<url>\n\n..." context) never matched
+                        # exactly and every such message showed twice.
                         if direction == "in":
                             claimed = con.execute(
                                 """UPDATE claude_msg SET src_uuid = %s
-                                    WHERE id = (SELECT id FROM claude_msg
-                                                 WHERE direction = 'in' AND src_uuid IS NULL AND delivered
-                                                   AND ts > now() - interval '10 minutes'
-                                                   AND (body = %s OR right(%s, length(body)) = body)
+                                    WHERE id = (SELECT id FROM (SELECT id, btrim(regexp_replace(body, '\\s+', ' ', 'g')) AS nb
+                                                                  FROM claude_msg
+                                                                 WHERE direction = 'in' AND src_uuid IS NULL AND delivered
+                                                                   AND ts > now() - interval '10 minutes') m
+                                                 WHERE nb = %s OR right(%s, length(nb)) = nb
                                                  ORDER BY id DESC LIMIT 1)
                                       -- the relay REPLAYS the transcript from offset 0 on restart: a turn
                                       -- already mirrored must not be claimed again (unique src_uuid).
                                       AND NOT EXISTS (SELECT 1 FROM claude_msg WHERE src_uuid = %s)""",
-                                (uuid, text.strip(), text.strip(), uuid)).rowcount
+                                (uuid, " ".join(text.split()), " ".join(text.split()), uuid)).rowcount
                             if claimed:
                                 continue
                         # src_uuid keys the row to the transcript turn (dedup). delivered=true means
