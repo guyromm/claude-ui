@@ -58,10 +58,25 @@ CLAUDE_UI_SCHEMA=<your data schema> claude-ui/install.sh
 | `@SCHEMA@` — data schema holding `claude_msg` / `claude_ctl` / `claude_status` | `CLAUDE_UI_SCHEMA`                            | `public`                               |
 | `@ADMIN@` — boolean SQL expression gating every API object                     | `CLAUDE_UI_ADMIN_FN`                          | `<schema>.is_admin()`                  |
 | `@ANON_ROLE@` / `@AUTH_ROLE@` — PostgREST roles in the grants                  | `CLAUDE_UI_ANON_ROLE` / `CLAUDE_UI_AUTH_ROLE` | `web_anon` / `authenticated`           |
+| `api.` — the schema PostgREST exposes, holding the views and RPCs              | `CLAUDE_UI_API_SCHEMA`                        | `api`                                  |
 
 The relay finds the session transcript under `~/.claude/projects/<host path with / as ->/` from
 `CLAUDE_UI_HOST_DIR` (set by `tmux.sh`), and reads the tables through `search_path`, so nothing in
-it names a schema. `api` itself is not parameterised: it is the stack's PostgREST convention.
+it names a schema.
+
+**PostgREST that serves only `public`** (no `api` schema; e.g. classifier, yad2, sippur): set
+`CLAUDE_UI_API_SCHEMA=public` and keep the tables out of it with a private data schema, e.g.
+`CLAUDE_UI_SCHEMA=claudeui` (the tables and the views share names, so the two schemas must differ). Then the
+views + RPCs land in `public`, the transcript tables in `claudeui`, which PostgREST doesn't expose, and PostgREST's
+config is untouched. Run the relay with the same `CLAUDE_UI_SCHEMA`.
+
+**The admin gate must check an identity, not just "has claims".** For an anonymous request PostgREST still sets
+`request.jwt.claims` to `{"role":"web_anon"}` (non-empty), so a predicate like
+`current_setting('request.jwt.claims', true) IS NOT NULL` lets everyone read the transcript. Use your host's admin
+check, or an identity claim your login JWT carries, e.g.
+`CLAUDE_UI_ADMIN_FN="(nullif(current_setting('request.jwt.claims', true), '')::json ->> 'sub') IS NOT NULL"`.
+**Test it** from the external hostname, logged out, against a table that HAS rows (an empty table returns `[]`
+whatever the gate says): `curl https://api.<host>/claude_msg?limit=1` must answer `[]`.
 
 Updating a host later: `git submodule update --remote claude-ui && claude-ui/sql/apply.sh`, and only THEN
 restart `voice-relay`: a newer relay may read columns the older schema lacks and crash-loop until applied.
