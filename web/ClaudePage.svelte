@@ -48,6 +48,16 @@
   let listening = false;  // mic on
   let interim = "";       // live STT transcript
   let draft = "";         // editable text before send
+  // DRAFT SURVIVES A RELOAD (guy, 11-13): the composer's text is kept in localStorage, per API (one chat per host),
+  // restored on mount and cleared when sent (send() empties draft, which saves ""). Debounced; storage errors
+  // (private modes) are ignored, the chat works without it.
+  const DRAFT_KEY = () => "claude_ui_draft:" + pgrst;
+  let draftRestored = false;
+  const flushDraft = () => { if (!draftRestored) return; try { if (draft) localStorage.setItem(DRAFT_KEY(), draft); else localStorage.removeItem(DRAFT_KEY()); } catch {} };
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let draftT;
+  $: if (draftRestored) { const d = draft; clearTimeout(draftT);
+    draftT = setTimeout(() => { try { if (d) localStorage.setItem(DRAFT_KEY(), d); else localStorage.removeItem(DRAFT_KEY()); } catch {} }, 300); }
   let sttBase = "";       // committed text the current utterance appends to (hoisted so Clear can reset it)
   let undoStack = [];     // draft snapshots before each committed utterance / clear -- "scratch that" pops
   let cmdFlash = "";      // one-word confirmation of the last voice command, shown in the placeholder
@@ -708,6 +718,9 @@
   }
 
   onMount(() => {
+    try { const d = localStorage.getItem(DRAFT_KEY()); if (d && !draft) draft = d; } catch {}
+    draftRestored = true;
+    addEventListener("pagehide", flushDraft);   // a reload within the debounce window keeps the last keystrokes
     document.addEventListener("selectionchange", onSelect);
     focusInput();
     // ready=true FIRST and in a finally: a throw in isAdmin()/getToken() (some mobile privacy modes
@@ -749,7 +762,7 @@
       ready = true;
     }
   });
-  onDestroy(() => { if (poll) clearInterval(poll); stopSpeaking(); try { rec?.stop(); } catch {} });
+  onDestroy(() => { if (typeof window !== "undefined") { removeEventListener("pagehide", flushDraft); flushDraft(); } if (poll) clearInterval(poll); stopSpeaking(); try { rec?.stop(); } catch {} });
 </script>
 
 <svelte:head><title>Claude</title><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /><meta name="robots" content="noindex" /></svelte:head>
