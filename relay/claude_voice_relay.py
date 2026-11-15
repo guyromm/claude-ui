@@ -126,6 +126,9 @@ def split_suggest(text):
     return clean, (suggestion or None)
 
 
+PASTE_TAG = _re.compile(r'\n?</?pasted_content id="?[^">]*"?>\n?')
+
+
 def transcript_msg(rec):
     """(direction, text, uuid) for a transcript record that carries user-facing text -- BOTH the
     assistant's replies AND the user's turns (so the phone shows CLI-typed messages too). Returns
@@ -150,6 +153,9 @@ def transcript_msg(rec):
                 parts.append(b.get("text", ""))
     text = "\n".join(p for p in parts if p).strip()
     if role == "user":
+        # Claude Code wraps a long typed/pasted message in <pasted_content id="N"> ... </pasted_content id="N">.
+        # Unwrapped, the echo matches the page's own row (claim below) instead of showing the message twice.
+        text = PASTE_TAG.sub("\n", text).strip()
         s = sys_summary(text)
         if s is not None:
             return "sys", s, uuid
