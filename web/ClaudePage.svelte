@@ -25,6 +25,8 @@
                               // (e.g. "/login?next="). Signed out -> redirected there; else just a link.
   /** @type {(() => string) | null} */
   export let context = null;  // optional: () => a line put first in every sent message (ClaudeDock: the page URL)
+  /** @type {string | null} */
+  export let title = "Claude";   // the browser-tab title; null leaves the host's title alone (ClaudeDock passes null)
   export let hideContext = false; // true: user bubbles don't show a leading PAGE_MARK block (popup/panel chats)
   // RENDERING PLUG-INS (optional): the host turns its own references in the text into links, e.g. board's
   // "#119/3" -> its task. Each is { pattern: RegExp (global), render(match) -> Node | null }: run on every
@@ -765,7 +767,7 @@
   onDestroy(() => { if (typeof window !== "undefined") { removeEventListener("pagehide", flushDraft); flushDraft(); } if (poll) clearInterval(poll); stopSpeaking(); try { rec?.stop(); } catch {} });
 </script>
 
-<svelte:head><title>Claude</title><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /><meta name="robots" content="noindex" /></svelte:head>
+<svelte:head>{#if title}<title>{title}</title>{/if}<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /><meta name="robots" content="noindex" /></svelte:head>
 
 {#if !ready}<p class="muted">…</p>
 {:else if !admin}<p class="muted">Admins only.{#if loginUrl} <a href={loginHref()}>Sign in as an admin</a>{/if}</p>

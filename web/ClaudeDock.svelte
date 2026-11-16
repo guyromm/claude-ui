@@ -131,7 +131,7 @@
     </div>
     <!-- every message says which page it was sent from: the session cannot see the viewer's screen;
          the viewer can, so the dock does not echo it back in the bubbles -->
-    <ClaudePage {pgrst} {getToken} {isAdmin} {renderers} context={() => PAGE_MARK + "\n" + location.href} hideContext />
+    <ClaudePage {pgrst} {getToken} {isAdmin} {renderers} context={() => PAGE_MARK + "\n" + location.href} hideContext title={null} />
   </aside>
 {/if}
 
