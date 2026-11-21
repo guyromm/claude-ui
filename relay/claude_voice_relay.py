@@ -16,7 +16,11 @@ most-recently-modified *.jsonl in the project dir -- i.e. the active conversatio
 Env:
   CLAUDE_VOICE_PANE        tmux target for send-keys (e.g. %20). Default: auto-detect a 'claude' pane.
   CLAUDE_VOICE_TRANSCRIPT  path to the transcript JSONL. Default: newest .jsonl in the project dir.
-  CLAUDE_VOICE_POLL        seconds between IN polls (default 2).
+  CLAUDE_VOICE_POLL        fallback seconds between IN/CTL polls (default 5). The relay normally wakes AT ONCE on
+                           NOTIFY claude_ui_wake (a trigger on claude_msg/claude_ctl inserts); the poll only covers a
+                           lost notification or a DB without the trigger yet.
+  CLAUDE_VOICE_TAIL        seconds between transcript reads (default 0.25; a stat() unless the file grew).
+  CLAUDE_VOICE_REDETECT    seconds between re-resolving WHICH transcript to tail (default 3; spawns tmux/ps).
 """
 import glob
 import json
@@ -32,7 +36,22 @@ import db as pg   # claude-ui/relay/db.py: the relay's own DB access, no host im
 # same relay serves any project. Override the whole path with CLAUDE_VOICE_TRANSCRIPT to pin a session.
 _HOST = os.path.abspath(os.environ.get("CLAUDE_UI_HOST_DIR") or os.getcwd())
 PROJ_DIR = os.path.expanduser("~/.claude/projects/" + _HOST.replace("/", "-"))
-POLL = float(os.environ.get("CLAUDE_VOICE_POLL", "2"))
+POLL = float(os.environ.get("CLAUDE_VOICE_POLL", "5"))
+TAIL = float(os.environ.get("CLAUDE_VOICE_TAIL", "0.25"))
+REDETECT = float(os.environ.get("CLAUDE_VOICE_REDETECT", "3"))
+WAKE = "claude_ui_wake"
+
+
+def wait_wake(con, timeout):
+    """Block until NOTIFY claude_ui_wake arrives on con (LISTENing, autocommit) or timeout seconds pass.
+    LATENCY: this replaces a blind sleep, so a page message is delivered within milliseconds of its INSERT
+    instead of up to POLL seconds later. Errors propagate: a dead connection must kill the loop (see DIE)."""
+    try:
+        gen = con.notifies(timeout=timeout, stop_after=1)
+    except TypeError:          # psycopg < 3.2 has no timeout/stop_after: fall back to the plain poll
+        time.sleep(timeout); return
+    for _ in gen:
+        pass
 
 
 def detect_pane():
@@ -258,7 +277,8 @@ def ctl_loop(con):
     """Emergency control: deliver SIGINT to the session's claude pid. int=once (interrupt current
     turn, the ESC equivalent for a bg session), int2=twice ~150ms apart (harder Ctrl-C)."""
     import signal
-    print("CTL: polling claude_ctl", flush=True)
+    con.execute(f"LISTEN {WAKE}")
+    print(f"CTL: waiting on NOTIFY {WAKE} (fallback poll 1s) for interrupts", flush=True)
     while True:
         try:
             rows = con.execute(
@@ -285,7 +305,11 @@ def ctl_loop(con):
             # is visible and self-healing where a swallowed error is neither.
             print(f"CTL: FATAL {type(e).__name__}: {e}", flush=True)
             os._exit(1)
-        time.sleep(1)
+        try:
+            wait_wake(con, 1)
+        except Exception as e:
+            print(f"CTL: FATAL {type(e).__name__}: {e}", flush=True)
+            os._exit(1)
 
 
 def out_loop(con):
@@ -304,12 +328,16 @@ def out_loop(con):
     # relay that loses exactly the window it was broken for is the worst possible behaviour: the user
     # cannot tell "nothing happened" from "I missed it".
     offset = 0
+    last_detect = time.monotonic()
     while True:
         try:
-            # re-detect in case the active conversation rotated to a new file
-            newp = detect_transcript()
-            if newp != path:
-                path, offset = newp, 0
+            # re-detect in case the active conversation rotated to a new file. THROTTLED: detection spawns
+            # tmux + ps per pane, fine once every few seconds, wasteful at the 0.25 s tail rate.
+            if time.monotonic() - last_detect >= REDETECT:
+                last_detect = time.monotonic()
+                newp = detect_transcript() or path
+                if newp != path:
+                    path, offset = newp, 0
             size = os.path.getsize(path)
             if size < offset:          # file truncated/rotated
                 offset = 0
@@ -379,7 +407,7 @@ def out_loop(con):
         # assistant's final text; if nothing follows, no further iteration would ever commit the
         # WAITING transition and the indicator would sit on "working" forever.
         settle_state(con)
-        time.sleep(1)
+        time.sleep(TAIL)
 
 
 def send_to_pane(pane, body):
@@ -443,7 +471,8 @@ def multi_admin(con):
 
 
 def in_loop(con):
-    print("IN: polling claude_msg for phone messages", flush=True)
+    con.execute(f"LISTEN {WAKE}")
+    print(f"IN: waiting on NOTIFY {WAKE} (fallback poll {POLL}s) for phone messages", flush=True)
     while True:
         try:
             # ONLY the phone's fresh delivery rows: direction='in', not yet send-keys'd, and NOT a
@@ -485,7 +514,11 @@ def in_loop(con):
             # is visible and self-healing where a swallowed error is neither.
             print(f"IN: FATAL {type(e).__name__}: {e}", flush=True)
             os._exit(1)
-        time.sleep(POLL)
+        try:
+            wait_wake(con, POLL)
+        except Exception as e:
+            print(f"IN: FATAL {type(e).__name__}: {e}", flush=True)
+            os._exit(1)
 
 
 def main():

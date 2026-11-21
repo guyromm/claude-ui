@@ -20,7 +20,7 @@ from pathlib import Path
 
 DIR = Path(__file__).parent.absolute()
 SCHEMA_DIR = DIR / "sql" / "schema"
-OWNED = re.compile(r"claude_(msg|ctl|status|send|img|file|upload)")
+OWNED = re.compile(r"claude_(msg|ctl|status|send|img|file|upload|wake)")
 
 
 def load_env():
@@ -97,7 +97,7 @@ def main():
         f.unlink()
     out = []
     for fn, c in mine:
-        c = re.sub(r"^CREATE (VIEW|FUNCTION)", r"CREATE OR REPLACE \1", c, flags=re.MULTILINE)
+        c = re.sub(r"^CREATE (VIEW|FUNCTION|TRIGGER)", r"CREATE OR REPLACE \1", c, flags=re.MULTILINE)
         nfn = re.sub(rf"^{re.escape(data_schema)}\.", "SCHEMA.", fn)
         (SCHEMA_DIR / nfn).write_text(neutral(c)); out.append(nfn)
     (SCHEMA_DIR / "order.txt").write_text("\n".join(out) + "\n")

@@ -163,9 +163,17 @@ while true; do python3 claude-ui/relay/claude_voice_relay.py || notify "voice-re
 ```
 
 Environment: `CLAUDE_VOICE_TRANSCRIPT` (the session's `.jsonl` transcript), `CLAUDE_VOICE_PANE`
-(tmux target of the `claude` pane; auto-detected when unset), `CLAUDE_VOICE_POLL` (seconds, default
-2), `CLAUDE_UI_PG` / `DBURI` (DSN). The relay **exits non-zero on any infrastructure
+(tmux target of the `claude` pane; auto-detected when unset), `CLAUDE_VOICE_POLL` (fallback poll, seconds, default
+5), `CLAUDE_VOICE_TAIL` (transcript read interval, default 0.25 s), `CLAUDE_VOICE_REDETECT` (how often to re-resolve
+which transcript to tail, default 3 s), `CLAUDE_UI_PG` / `DBURI` (DSN). The relay **exits non-zero on any infrastructure
 error** — a dead DB connection must restart the process, not be retried in place.
+
+**Latency.** A page message reaches the session within milliseconds: `claude_wake()` triggers on `claude_msg` (page
+rows only) and `claude_ctl` send `NOTIFY claude_ui_wake`, and the relay `LISTEN`s instead of sleeping (the poll is only
+a fallback). Replies are mirrored within ~0.25 s of Claude Code writing them to the transcript. The page polls
+adaptively: 0.5 s for 30 s after you send and 15 s after any new message, 1 s while the session works, 2.5 s idle,
+15 s in a hidden tab, and at once when the tab comes back. Apply the schema (`sql/apply.sh`) before restarting a newer
+relay. Without the triggers it still works, at the fallback poll rate.
 
 **Who is talking.** `api.claude_send` stores the sender in `claude_msg.author`. On a multi-admin host the relay
 types each page message as `[from <author>] <text>` so the session knows which admin is talking; on a single-admin
