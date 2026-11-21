@@ -7,7 +7,7 @@
 #   CLAUDE_UI_ANON_ROLE  PostgREST anonymous role                 (default: web_anon)
 #   CLAUDE_UI_AUTH_ROLE  PostgREST authenticated role             (default: authenticated)
 #   CLAUDE_UI_WHO_FN     SQL text expression naming the sender    (default: the first of the JWT claims
-#                        handle, name, preferred_username, username, email, sub)
+#                        handle, preferred_username, username, name, email, sub; the login name before the display name, so one person signing in through auth.webgma.co.il (name "Guy") and with a host token (handle "guy") stays one author)
 #   DBURI                connection string (env, or ../../.env when vendored)
 # The API schema (CLAUDE_UI_API_SCHEMA, PostgREST's exposed schema) is assumed to exist. Views/functions are CREATE OR
 # REPLACE; tables use plain CREATE TABLE and are skipped with an error line if they already exist.
@@ -26,7 +26,7 @@ S="${CLAUDE_UI_SCHEMA:-public}"
 API="${CLAUDE_UI_API_SCHEMA:-api}"
 ADMIN="${CLAUDE_UI_ADMIN_FN:-$S.is_admin()}"
 ANON="${CLAUDE_UI_ANON_ROLE:-web_anon}"; AUTH="${CLAUDE_UI_AUTH_ROLE:-authenticated}"
-WHO="${CLAUDE_UI_WHO_FN:-(SELECT coalesce(c->>'handle', c->>'name', c->>'preferred_username', c->>'username', c->>'email', c->>'sub') FROM (SELECT nullif(current_setting('request.jwt.claims', true), '')::json AS c) jwt)}"
+WHO="${CLAUDE_UI_WHO_FN:-(SELECT coalesce(c->>'handle', c->>'preferred_username', c->>'username', c->>'name', c->>'email', c->>'sub') FROM (SELECT nullif(current_setting('request.jwt.claims', true), '')::json AS c) jwt)}"
 esc() { printf '%s' "$1" | sed 's/[&/\]/\\&/g'; }
 render() { sed -e "s/\\bapi\\./$API./g" -e "s/@SCHEMA@/$S/g" -e "s/@ADMIN@/$(esc "$ADMIN")/g" -e "s/@WHO@/$(esc "$WHO")/g" \
                -e "s/@ANON_ROLE@/$ANON/g" -e "s/@AUTH_ROLE@/$AUTH/g"; }
