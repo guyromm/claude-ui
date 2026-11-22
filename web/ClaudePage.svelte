@@ -86,7 +86,7 @@
   let busy = null;          // "working" | "waiting" | null (unknown yet)
   let busySince = null;
   let suggestion = "";    // Claude's suggested next prompt (@@suggest: on its turn); Tab accepts it
-  let poll = null, rec = null;
+  let rec = null;
   /** @type {HTMLElement} */
   let el;                 // scroll container
   // UNREAD COUNTER INSTEAD OF AUTOSCROLL ("do not touch the viewport").
@@ -390,6 +390,31 @@
   }
   afterUpdate(() => { loadImages(); loadFiles(); });
 
+  // ADAPTIVE POLL (latency): a fixed 2 s interval meant a reply sat up to 2 s in the DB before showing.
+  // Fast (0.5 s) for a while after you send or after a message arrives (replies come in bursts), 1 s while
+  // the session is working, 2.5 s when idle, 15 s in a hidden tab; a tab coming back polls at once. One
+  // request in flight at a time, so a slow API never stacks requests. (Long polling through PostgREST was
+  // rejected: each waiting tab would hold one of its ~10 pooled DB connections, and an exhausted pool
+  // 504s the whole host API, as the unbounded poll once did.)
+  let fastUntil = 0, inflight = false, stopped = false;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let pollT;
+  const nextDelay = () => (typeof document !== "undefined" && document.hidden) ? 15000
+    : Date.now() < fastUntil ? 500 : busy === "working" ? 1000 : 2500;
+  async function pollLoop() {
+    pollT = undefined;
+    if (stopped) return;
+    if (!inflight) { inflight = true; try { await fetchNew(); } finally { inflight = false; } }
+    if (!stopped && pollT === undefined) pollT = setTimeout(pollLoop, nextDelay());
+  }
+  /** poll now, then fast for `ms` */
+  function pollSoon(ms = 30000) {
+    fastUntil = Math.max(fastUntil, Date.now() + ms);
+    if (pollT !== undefined) { clearTimeout(pollT); pollT = undefined; }
+    if (!inflight) pollLoop();
+  }
+  const onVisible = () => { if (!document.hidden) pollSoon(0); };
+
   async function fetchNew() {
     try {
       // poll BOTH directions now: the view surfaces assistant replies AND transcript-mirrored user
@@ -418,6 +443,7 @@
       if (!from) rows = rows.reverse();     // the desc+limit fallback comes back newest-first
       if (rows.length) {
         err = "";
+        fastUntil = Math.max(fastUntil, Date.now() + 15000);   // more of the burst is likely on its way
         for (const m of rows) {
           msgs = [...msgs, m];
           lastId = Math.max(lastId, m.id);
@@ -561,6 +587,7 @@
       // Only when the reader is AT the bottom, though: answering something up in the history must not
       // throw away the place being read (the unseen counter shows the message landed below).
       followOwn = stick;
+      pollSoon();          // your message is in the view already: show it now, then watch for the reply
     } catch { err = "send failed"; }
   }
 
@@ -756,7 +783,7 @@
                               else el?.scrollTo(0, el.scrollHeight);
                             }); })
           .catch(() => {})
-          .finally(() => { loadingMsgs = false; poll = setInterval(fetchNew, 2000); });
+          .finally(() => { loadingMsgs = false; addEventListener("visibilitychange", onVisible); pollLoop(); });
       }
     } catch (e) {
       err = "init: " + (e?.message || e);
@@ -764,7 +791,7 @@
       ready = true;
     }
   });
-  onDestroy(() => { if (typeof window !== "undefined") { removeEventListener("pagehide", flushDraft); flushDraft(); } if (poll) clearInterval(poll); stopSpeaking(); try { rec?.stop(); } catch {} });
+  onDestroy(() => { if (typeof window !== "undefined") { removeEventListener("pagehide", flushDraft); flushDraft(); } stopped = true; if (pollT !== undefined) clearTimeout(pollT); if (typeof window !== "undefined") removeEventListener("visibilitychange", onVisible); stopSpeaking(); try { rec?.stop(); } catch {} });
 </script>
 
 <svelte:head>{#if title}<title>{title}</title>{/if}<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /><meta name="robots" content="noindex" /></svelte:head>
