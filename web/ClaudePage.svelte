@@ -202,6 +202,23 @@
     return out.join("\n");
   }
 
+  // A link's TEXT drops what it shares with the page it is shown on (guy, 11-25): same site -> only the path (+ query,
+  // hash); same page too -> only the query and/or hash. Other sites keep the full url. The href is never changed.
+  // u is already html-escaped (esc() ran first): unescape to parse, decode %xx for readability, escape again.
+  function shortUrl(u) {
+    if (typeof location === "undefined") return u;
+    try {
+      const x = new URL(u.replace(/&amp;/g, "&"));
+      if (x.origin !== location.origin) return u;
+      let t;
+      if (x.pathname !== location.pathname) t = x.pathname + x.search + x.hash;
+      else if (x.search !== location.search) t = x.search + x.hash || x.pathname;
+      else t = x.hash || x.pathname;
+      try { t = decodeURI(t); } catch {}
+      return esc(t);
+    } catch { return u; }
+  }
+
   function md(src) {
     const blocks = [];
     let s = esc(src || "");
@@ -218,13 +235,13 @@
       pre + "<blockquote>" +
       blk.replace(/\n$/, "").split("\n").map((l) => l.replace(/^&gt;\s?/, "")).join("\n") +
       "</blockquote>");
-    s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_m, t, u) => `<a href="${u}" target="_blank" rel="noopener">${t === u ? shortUrl(u) : t}</a>`);
     // Autolink BARE urls anywhere in a line (agents link everything they mention: AGENTS.md). The leading boundary
     // (start | whitespace | '(') means a url already inside href="..." (preceded by '"') or as anchor
     // text (preceded by '>') is NOT re-matched, so this is safe to run after the markdown-link pass.
     // Trailing sentence punctuation is left outside the link.
     s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g,
-                  '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+                  (_m, pre, u) => `${pre}<a href="${u}" target="_blank" rel="noopener">${shortUrl(u)}</a>`);
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
     // GH-style tables: a header row, a |---|---| separator, then body rows. Stash as a block
