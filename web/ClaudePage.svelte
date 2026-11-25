@@ -976,7 +976,8 @@
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
   /* A pulsing pill is motion the user did not ask for; respect the OS setting. */
   @media (prefers-reduced-motion: reduce) { .busy.working { animation: none } }
-  header { display: flex; align-items: center; justify-content: space-between; padding: .5rem .7rem; border-bottom: 1px solid #e6eaed; }
+  /* flex-wrap: on a phone the title, the busy pill and the toggles don't fit one row (guy 11-25: popup wider than the screen) */
+  header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .3rem .5rem; padding: .5rem .7rem; border-bottom: 1px solid #e6eaed; }
   header b { color: #1c2733; }
   .tg button { border: 1px solid #ddd; background: #fff; border-radius: 999px; padding: .2rem .6rem; font-size: .8rem; color: #666; cursor: pointer; margin-left: .3rem; }
   .tg button.on { border-color: #1e8f4e; color: #1e8f4e; font-weight: 600; }
@@ -989,7 +990,9 @@
   /* neutral system/task-notification chip: centered, muted, clearly neither the user nor Claude */
   .chip { background: #eceff1; color: #5b6570; border: 1px solid #dfe4e8; border-radius: 999px;
           padding: .25rem .7rem; font-size: .8rem; max-width: 90%; text-align: center; }
-  .bubble { border-radius: 14px; padding: .5rem .75rem; max-width: 85%; font-size: .95rem; line-height: 1.45; }
+  /* overflow-wrap: a long url or token must wrap, not widen the log past the screen (min-width 0 lets flex items shrink) */
+  .bubble { border-radius: 14px; padding: .5rem .75rem; max-width: 85%; font-size: .95rem; line-height: 1.45; overflow-wrap: anywhere; min-width: 0; }
+  .m { min-width: 0; }
   .bubble.a { background: #fff; border: 1px solid #e4e8ec; color: #1c2733; border-top-left-radius: 4px; }
   .bubble.u { background: #1e8f4e; color: #fff; border-top-right-radius: 4px; white-space: pre-wrap; }
   /* "user system": same side as the user, deliberately NOT the user green. Muted violet so a
