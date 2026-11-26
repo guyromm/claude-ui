@@ -12,6 +12,7 @@
   // HOST CONTRACT: ClaudePage's three props, plus
   export let pgrst;
   export let getToken;
+  export let refreshToken = null;     // optional, passed to ClaudePage (refresh + retry on 401)
   export let isAdmin;
   export let hidden = false;          // host hides the dock, e.g. on its full-page claude route
   export let storageKey = "claude_ui_dock";
@@ -131,7 +132,7 @@
     </div>
     <!-- every message says which page it was sent from: the session cannot see the viewer's screen;
          the viewer can, so the dock does not echo it back in the bubbles -->
-    <ClaudePage {pgrst} {getToken} {isAdmin} {renderers} context={() => PAGE_MARK + "\n" + location.href} hideContext title={null} />
+    <ClaudePage {pgrst} {getToken} {refreshToken} {isAdmin} {renderers} context={() => PAGE_MARK + "\n" + location.href} hideContext title={null} />
   </aside>
 {/if}
 

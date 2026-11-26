@@ -19,6 +19,8 @@
   // its JWT getter and its admin predicate. Nothing in here imports from the host's $lib.
   export let pgrst;          // e.g. "https://api.example.com"
   export let getToken;       // () => JWT string (or null)
+  /** @type {null | (() => Promise<string | null>)} */
+  export let refreshToken = null; // optional: fetch a fresh JWT; a send that gets 401 calls it and retries once
   export let isAdmin;        // () => boolean
   /** @type {string | null} */
   export let loginUrl = null; // optional: the host's sign-in page, the return path is appended URL-encoded
@@ -586,14 +588,20 @@
       } catch (e) { err = e.message || "upload failed"; return; }   // draft and files stay, to retry
       finally { uploading = ""; }
     }
+    const unsent = body;   // the text plus any uploaded files' refs, without the page context
     if (context) body = context() + "\n\n" + body;
     draft = ""; interim = ""; suggestion = "";   // sending moves past the suggestion
-    try {
-      const r = await fetch(`${pgrst}/rpc/claude_send`, {
+    // A failed send must never lose the text: the composer was cleared above, so put it back. A 401 is
+    // usually a token that ran out while the tab slept (phones suspend timers): refresh once and retry.
+    const restore = (why) => { err = why; if (!draft) draft = unsent; };
+    const post = () => fetch(`${pgrst}/rpc/claude_send`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ p_body: body }) });
-      if (!r.ok) { err = `send ${r.status}`; return; }
+    try {
+      let r = await post();
+      if (r.status === 401 && refreshToken) { await refreshToken(); r = await post(); }
+      if (!r.ok) { restore(r.status === 401 ? "not sent: signed out, sign in again" : `not sent (${r.status})`); return; }
       // no optimistic echo: the message appears via its transcript mirror (arrives on the next poll,
       // ~2s), the same single source that also surfaces CLI-typed messages. Avoids a double render.
       // ...but FOLLOW YOUR OWN MESSAGE DOWN. "Do not jerk the viewport" is about
@@ -605,7 +613,7 @@
       // throw away the place being read (the unseen counter shows the message landed below).
       followOwn = stick;
       pollSoon();          // your message is in the view already: show it now, then watch for the reply
-    } catch { err = "send failed"; }
+    } catch { restore("not sent: network error"); }
   }
 
   const clearDraft = () => {
