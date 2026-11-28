@@ -7,7 +7,8 @@ CREATE OR REPLACE VIEW api.claude_status AS
     since,
     ts
    FROM @SCHEMA@.claude_status
-  WHERE @ADMIN@;
+  WHERE @ADMIN@
+  WITH LOCAL CHECK OPTION;
 
 
 --

@@ -8,7 +8,8 @@ CREATE OR REPLACE VIEW api.claude_img AS
     caption,
     encode(bytes, 'base64'::text) AS b64
    FROM @SCHEMA@.claude_img
-  WHERE @ADMIN@;
+  WHERE @ADMIN@
+  WITH LOCAL CHECK OPTION;
 
 
 --
